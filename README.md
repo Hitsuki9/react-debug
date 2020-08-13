@@ -12,9 +12,8 @@
 1. `npm run eject` 暴露配置
 2. 安装 `@babel/preset-flow` 并添加到 `babel-loader` 配置中
 
-`config/webpack.config.js`
-
 ```js
+// config/webpack.config.js
 {
   test: /\.(js|mjs|jsx|ts|tsx)$/,
   include: paths.appSrc,
@@ -51,9 +50,8 @@
 
 3. 添加环境变量
 
-`config/webpack.config.js`
-
 ```js
+// config/webpack.config.js
 new webpack.DefinePlugin({
 + __DEV__: false,
 + __PROFILE__: false,
@@ -65,6 +63,7 @@ new webpack.DefinePlugin({
 4. 修改路径别名
 
 ```js
+// config/webpack.config.js
 // resolve
 {
   // ...
