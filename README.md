@@ -60,7 +60,7 @@ new webpack.DefinePlugin({
 })
 ```
 
-4. 修改路径别名
+4. 添加路径别名
 
 ```js
 // config/webpack.config.js
