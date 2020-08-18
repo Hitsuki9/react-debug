@@ -68,14 +68,18 @@ new webpack.DefinePlugin({
 {
   // ...
   alias: {
-+   'shared': path.resolve(__dirname, '../src/packages/shared'),
 +   'react-dom': path.resolve(__dirname, '../src/packages/react-dom'),
 +   'react-reconciler': path.resolve(__dirname, '../src/packages/react-reconciler'),
++   'react': path.resolve(__dirname, '../src/packages/react'),
++   './ReactFiberHostConfig': path.resolve(__dirname, '../src/packages/react-reconciler/src/forks/ReactFiberHostConfig.dom'),
+
++   'shared/ReactSharedInternals': path.resolve(__dirname, '../src/packages/react/src/ReactSharedInternals'),
++   'shared': path.resolve(__dirname, '../src/packages/shared'),
+
 +   'scheduler/tracing': path.resolve(__dirname, '../src/packages/scheduler/tracing'),
 +   'scheduler': path.resolve(__dirname, '../src/packages/scheduler/unstable_mock'),
 +   './SchedulerHostConfig': path.resolve(__dirname, '../src/packages/scheduler/src/forks/SchedulerHostConfig.default'),
 +   './src/SchedulerHostConfig.js': path.resolve(__dirname, '../src/packages/scheduler/src/forks/SchedulerHostConfig.mock'),
-+   './ReactFiberHostConfig': path.resolve(__dirname, '../src/packages/react-reconciler/src/forks/ReactFiberHostConfig.dom'),
     // Support React Native Web
     // https://www.smashingmagazine.com/2016/08/a-glimpse-into-the-future-with-react-native-for-web/
     'react-native': 'react-native-web',

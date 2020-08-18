@@ -9,7 +9,4 @@ const Block = (
 
 console.log(Block);
 
-ReactDOM.render(
-  Block,
-  document.getElementById('root')
-);
+ReactDOM.render(Block, document.getElementById('root'));
