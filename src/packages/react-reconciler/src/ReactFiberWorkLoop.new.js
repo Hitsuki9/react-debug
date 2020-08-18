@@ -14,8 +14,6 @@ import type {ReactPriorityLevel} from './ReactInternalTypes';
 import type {Interaction} from 'scheduler/src/Tracing';
 import type {SuspenseConfig} from './ReactFiberSuspenseConfig';
 import type {SuspenseState} from './ReactFiberSuspenseComponent.new';
-import type {Effect as HookEffect} from './ReactFiberHooks.new';
-import type {HookEffectTag} from './ReactHookEffectTags';
 import type {StackCursor} from './ReactFiberStack.new';
 import type {FunctionComponentUpdateQueue} from './ReactFiberHooks.new';
 
@@ -32,6 +30,7 @@ import {
   enableDebugTracing,
   enableSchedulingProfiler,
   enableScopeAPI,
+  skipUnmountedBoundaries,
 } from 'shared/ReactFeatureFlags';
 import ReactSharedInternals from 'shared/ReactSharedInternals';
 import invariant from 'shared/invariant';
@@ -53,7 +52,6 @@ import {
 } from './SchedulerWithReactIntegration.new';
 import {
   NoEffect as NoHookEffect,
-  HasEffect as HookHasEffect,
   Passive as HookPassive,
 } from './ReactHookEffectTags';
 import {
@@ -206,12 +204,14 @@ import {
   commitPlacement,
   commitWork,
   commitDeletion,
+  commitPassiveUnmount,
+  commitPassiveWork,
+  commitPassiveLifeCycles as commitPassiveEffectOnFiber,
   commitDetachRef,
   commitAttachRef,
   commitPassiveEffectDurations,
   commitResetTextContent,
   isSuspenseBoundaryBeingHidden,
-  safelyCallDestroy,
 } from './ReactFiberCommitWork.new';
 import {enqueueUpdate} from './ReactUpdateQueue.new';
 import {resetContextDependencies} from './ReactFiberNewContext.new';
@@ -229,8 +229,6 @@ import {
 
 import {
   recordCommitTime,
-  recordPassiveEffectDuration,
-  startPassiveEffectTimer,
   startProfilerTimer,
   stopProfilerTimerIfRunningAndRecordDelta,
 } from './ReactProfilerTimer.new';
@@ -757,7 +755,7 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
 
 // This is the entry point for every concurrent task, i.e. anything that
 // goes through Scheduler.
-function performConcurrentWorkOnRoot(root, didTimeout) {
+function performConcurrentWorkOnRoot(root) {
   // Since we know we're in a React event, we can clear the current
   // event time. The next update will compute a new event time.
   currentEventTime = NoTimestamp;
@@ -794,19 +792,6 @@ function performConcurrentWorkOnRoot(root, didTimeout) {
   );
   if (lanes === NoLanes) {
     // Defensive coding. This is never expected to happen.
-    return null;
-  }
-
-  // TODO: We only check `didTimeout` defensively, to account for a Scheduler
-  // bug where `shouldYield` sometimes returns `true` even if `didTimeout` is
-  // true, which leads to an infinite loop. Once the bug in Scheduler is
-  // fixed, we can remove this, since we track expiration ourselves.
-  if (didTimeout) {
-    // Something expired. Flush synchronously until there's no expired
-    // work left.
-    markRootExpired(root, lanes);
-    // This will schedule a synchronous callback.
-    ensureRootIsScheduled(root, now());
     return null;
   }
 
@@ -1470,7 +1455,7 @@ function handleError(root, thrownValue): void {
   } while (true);
 }
 
-function pushDispatcher(root) {
+function pushDispatcher() {
   const prevDispatcher = ReactCurrentDispatcher.current;
   ReactCurrentDispatcher.current = ContextOnlyDispatcher;
   if (prevDispatcher === null) {
@@ -1586,7 +1571,7 @@ export function renderHasNotSuspendedYet(): boolean {
 function renderRootSync(root: FiberRoot, lanes: Lanes) {
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
-  const prevDispatcher = pushDispatcher(root);
+  const prevDispatcher = pushDispatcher();
 
   // If the root or lanes have changed, throw out the existing stack
   // and prepare a fresh one. Otherwise we'll continue where we left off.
@@ -1661,7 +1646,7 @@ function workLoopSync() {
 function renderRootConcurrent(root: FiberRoot, lanes: Lanes) {
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
-  const prevDispatcher = pushDispatcher(root);
+  const prevDispatcher = pushDispatcher();
 
   // If the root or lanes have changed, throw out the existing stack
   // and prepare a fresh one. Otherwise we'll continue where we left off.
@@ -2409,14 +2394,14 @@ function commitBeforeMutationEffects(firstChild: Fiber) {
       invokeGuardedCallback(null, commitBeforeMutationEffectsImpl, null, fiber);
       if (hasCaughtError()) {
         const error = clearCaughtError();
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
       resetCurrentDebugFiberInDEV();
     } else {
       try {
         commitBeforeMutationEffectsImpl(fiber);
       } catch (error) {
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
     }
     fiber = fiber.sibling;
@@ -2478,13 +2463,18 @@ function commitBeforeMutationEffectsDeletions(deletions: Array<Fiber>) {
 function commitMutationEffects(
   firstChild: Fiber,
   root: FiberRoot,
-  renderPriorityLevel,
+  renderPriorityLevel: ReactPriorityLevel,
 ) {
   let fiber = firstChild;
   while (fiber !== null) {
     const deletions = fiber.deletions;
     if (deletions !== null) {
-      commitMutationEffectsDeletions(deletions, root, renderPriorityLevel);
+      commitMutationEffectsDeletions(
+        deletions,
+        fiber,
+        root,
+        renderPriorityLevel,
+      );
     }
 
     if (fiber.child !== null) {
@@ -2506,14 +2496,14 @@ function commitMutationEffects(
       );
       if (hasCaughtError()) {
         const error = clearCaughtError();
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
       resetCurrentDebugFiberInDEV();
     } else {
       try {
         commitMutationEffectsImpl(fiber, root, renderPriorityLevel);
       } catch (error) {
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
     }
     fiber = fiber.sibling;
@@ -2593,6 +2583,7 @@ function commitMutationEffectsImpl(
 
 function commitMutationEffectsDeletions(
   deletions: Array<Fiber>,
+  nearestMountedAncestor: Fiber,
   root: FiberRoot,
   renderPriorityLevel,
 ) {
@@ -2605,17 +2596,23 @@ function commitMutationEffectsDeletions(
         null,
         root,
         childToDelete,
+        nearestMountedAncestor,
         renderPriorityLevel,
       );
       if (hasCaughtError()) {
         const error = clearCaughtError();
-        captureCommitPhaseError(childToDelete, error);
+        captureCommitPhaseError(childToDelete, nearestMountedAncestor, error);
       }
     } else {
       try {
-        commitDeletion(root, childToDelete, renderPriorityLevel);
+        commitDeletion(
+          root,
+          childToDelete,
+          nearestMountedAncestor,
+          renderPriorityLevel,
+        );
       } catch (error) {
-        captureCommitPhaseError(childToDelete, error);
+        captureCommitPhaseError(childToDelete, nearestMountedAncestor, error);
       }
     }
   }
@@ -2657,14 +2654,14 @@ function commitLayoutEffects(
       );
       if (hasCaughtError()) {
         const error = clearCaughtError();
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
       resetCurrentDebugFiberInDEV();
     } else {
       try {
         commitLayoutEffectsImpl(fiber, root, committedLanes);
       } catch (error) {
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
     }
     fiber = fiber.sibling;
@@ -2738,11 +2735,6 @@ export function enqueuePendingPassiveProfilerEffect(fiber: Fiber): void {
   }
 }
 
-function invokePassiveEffectCreate(effect: HookEffect): void {
-  const create = effect.create;
-  effect.destroy = create();
-}
-
 function flushPassiveMountEffects(firstChild: Fiber): void {
   let fiber = firstChild;
   while (fiber !== null) {
@@ -2753,90 +2745,12 @@ function flushPassiveMountEffects(firstChild: Fiber): void {
     }
 
     if ((fiber.effectTag & Update) !== NoEffect) {
-      switch (fiber.tag) {
-        case FunctionComponent:
-        case ForwardRef:
-        case SimpleMemoComponent:
-        case Block: {
-          flushPassiveMountEffectsImpl(fiber);
-        }
-      }
+      setCurrentDebugFiberInDEV(fiber);
+      commitPassiveEffectOnFiber(fiber);
+      resetCurrentDebugFiberInDEV();
     }
 
     fiber = fiber.sibling;
-  }
-}
-
-function flushPassiveMountEffectsImpl(fiber: Fiber): void {
-  setCurrentDebugFiberInDEV(fiber);
-
-  const updateQueue: FunctionComponentUpdateQueue | null = (fiber.updateQueue: any);
-  const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
-  if (lastEffect !== null) {
-    const firstEffect = lastEffect.next;
-    let effect = firstEffect;
-    do {
-      const {next, tag} = effect;
-
-      if (
-        (tag & HookPassive) !== NoHookEffect &&
-        (tag & HookHasEffect) !== NoHookEffect
-      ) {
-        if (__DEV__) {
-          if (
-            enableProfilerTimer &&
-            enableProfilerCommitHooks &&
-            fiber.mode & ProfileMode
-          ) {
-            startPassiveEffectTimer();
-            invokeGuardedCallback(
-              null,
-              invokePassiveEffectCreate,
-              null,
-              effect,
-            );
-            recordPassiveEffectDuration(fiber);
-          } else {
-            invokeGuardedCallback(
-              null,
-              invokePassiveEffectCreate,
-              null,
-              effect,
-            );
-          }
-          if (hasCaughtError()) {
-            invariant(fiber !== null, 'Should be working on an effect.');
-            const error = clearCaughtError();
-            captureCommitPhaseError(fiber, error);
-          }
-        } else {
-          try {
-            const create = effect.create;
-            if (
-              enableProfilerTimer &&
-              enableProfilerCommitHooks &&
-              fiber.mode & ProfileMode
-            ) {
-              try {
-                startPassiveEffectTimer();
-                effect.destroy = create();
-              } finally {
-                recordPassiveEffectDuration(fiber);
-              }
-            } else {
-              effect.destroy = create();
-            }
-          } catch (error) {
-            invariant(fiber !== null, 'Should be working on an effect.');
-            captureCommitPhaseError(fiber, error);
-          }
-        }
-      }
-
-      effect = next;
-    } while (effect !== firstEffect);
-
-    resetCurrentDebugFiberInDEV();
   }
 }
 
@@ -2847,7 +2761,7 @@ function flushPassiveUnmountEffects(firstChild: Fiber): void {
     if (deletions !== null) {
       for (let i = 0; i < deletions.length; i++) {
         const fiberToDelete = deletions[i];
-        flushPassiveUnmountEffectsInsideOfDeletedTree(fiberToDelete);
+        flushPassiveUnmountEffectsInsideOfDeletedTree(fiberToDelete, fiber);
 
         // Now that passive effects have been processed, it's safe to detach lingering pointers.
         detachFiberAfterEffects(fiberToDelete);
@@ -2866,16 +2780,11 @@ function flushPassiveUnmountEffects(firstChild: Fiber): void {
       }
     }
 
-    switch (fiber.tag) {
-      case FunctionComponent:
-      case ForwardRef:
-      case SimpleMemoComponent:
-      case Block: {
-        const primaryEffectTag = fiber.effectTag & Passive;
-        if (primaryEffectTag !== NoEffect) {
-          flushPassiveUnmountEffectsImpl(fiber, HookPassive | HookHasEffect);
-        }
-      }
+    const primaryEffectTag = fiber.effectTag & Passive;
+    if (primaryEffectTag !== NoEffect) {
+      setCurrentDebugFiberInDEV(fiber);
+      commitPassiveWork(fiber);
+      resetCurrentDebugFiberInDEV();
     }
 
     fiber = fiber.sibling;
@@ -2884,6 +2793,7 @@ function flushPassiveUnmountEffects(firstChild: Fiber): void {
 
 function flushPassiveUnmountEffectsInsideOfDeletedTree(
   fiberToDelete: Fiber,
+  nearestMountedAncestor: Fiber,
 ): void {
   if ((fiberToDelete.subtreeTag & PassiveStaticSubtreeTag) !== NoSubtreeTag) {
     // If any children have passive effects then traverse the subtree.
@@ -2892,58 +2802,17 @@ function flushPassiveUnmountEffectsInsideOfDeletedTree(
     // since that would not cover passive effects in siblings.
     let child = fiberToDelete.child;
     while (child !== null) {
-      flushPassiveUnmountEffectsInsideOfDeletedTree(child);
+      flushPassiveUnmountEffectsInsideOfDeletedTree(
+        child,
+        nearestMountedAncestor,
+      );
       child = child.sibling;
     }
   }
 
   if ((fiberToDelete.effectTag & PassiveStatic) !== NoEffect) {
-    switch (fiberToDelete.tag) {
-      case FunctionComponent:
-      case ForwardRef:
-      case SimpleMemoComponent:
-      case Block: {
-        flushPassiveUnmountEffectsImpl(fiberToDelete, HookPassive);
-      }
-    }
-  }
-}
-
-function flushPassiveUnmountEffectsImpl(
-  fiber: Fiber,
-  // Tags to check for when deciding whether to unmount. e.g. to skip over
-  // layout effects
-  hookEffectTag: HookEffectTag,
-): void {
-  const updateQueue: FunctionComponentUpdateQueue | null = (fiber.updateQueue: any);
-  const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
-  if (lastEffect !== null) {
-    setCurrentDebugFiberInDEV(fiber);
-
-    const firstEffect = lastEffect.next;
-    let effect = firstEffect;
-    do {
-      const {next, tag} = effect;
-      if ((tag & hookEffectTag) === hookEffectTag) {
-        const destroy = effect.destroy;
-        if (destroy !== undefined) {
-          effect.destroy = undefined;
-          if (
-            enableProfilerTimer &&
-            enableProfilerCommitHooks &&
-            fiber.mode & ProfileMode
-          ) {
-            startPassiveEffectTimer();
-            safelyCallDestroy(fiber, destroy);
-            recordPassiveEffectDuration(fiber);
-          } else {
-            safelyCallDestroy(fiber, destroy);
-          }
-        }
-      }
-      effect = next;
-    } while (effect !== firstEffect);
-
+    setCurrentDebugFiberInDEV(fiberToDelete);
+    commitPassiveUnmount(fiberToDelete, nearestMountedAncestor);
     resetCurrentDebugFiberInDEV();
   }
 }
@@ -3070,7 +2939,11 @@ function captureCommitPhaseErrorOnRoot(
   }
 }
 
-export function captureCommitPhaseError(sourceFiber: Fiber, error: mixed) {
+export function captureCommitPhaseError(
+  sourceFiber: Fiber,
+  nearestMountedAncestor: Fiber | null,
+  error: mixed,
+) {
   if (sourceFiber.tag === HostRoot) {
     // Error was thrown at the root. There is no parent, so the root
     // itself should capture it.
@@ -3078,7 +2951,13 @@ export function captureCommitPhaseError(sourceFiber: Fiber, error: mixed) {
     return;
   }
 
-  let fiber = sourceFiber.return;
+  let fiber = null;
+  if (skipUnmountedBoundaries) {
+    fiber = nearestMountedAncestor;
+  } else {
+    fiber = sourceFiber.return;
+  }
+
   while (fiber !== null) {
     if (fiber.tag === HostRoot) {
       captureCommitPhaseErrorOnRoot(fiber, sourceFiber, error);
@@ -3551,7 +3430,7 @@ function warnAboutRenderPhaseUpdatesInDEV(fiber) {
             console.error(
               'Cannot update a component (`%s`) while rendering a ' +
                 'different component (`%s`). To locate the bad setState() call inside `%s`, ' +
-                'follow the stack trace as described in https://fb.me/setstate-in-render',
+                'follow the stack trace as described in https://reactjs.org/link/setstate-in-render',
               setStateComponentName,
               renderingComponentName,
               renderingComponentName,
@@ -3634,7 +3513,7 @@ export function warnIfNotCurrentlyActingEffectsInDEV(fiber: Fiber): void {
           '/* assert on the output */\n\n' +
           "This ensures that you're testing the behavior the user would see " +
           'in the browser.' +
-          ' Learn more at https://fb.me/react-wrap-tests-with-act',
+          ' Learn more at https://reactjs.org/link/wrap-tests-with-act',
         getComponentName(fiber.type),
       );
     }
@@ -3662,7 +3541,7 @@ function warnIfNotCurrentlyActingUpdatesInDEV(fiber: Fiber): void {
             '/* assert on the output */\n\n' +
             "This ensures that you're testing the behavior the user would see " +
             'in the browser.' +
-            ' Learn more at https://fb.me/react-wrap-tests-with-act',
+            ' Learn more at https://reactjs.org/link/wrap-tests-with-act',
           getComponentName(fiber.type),
         );
       } finally {
@@ -3700,7 +3579,7 @@ export function warnIfUnmockedScheduler(fiber: Fiber) {
             // Break up requires to avoid accidentally parsing them as dependencies.
             "jest.mock('scheduler', () => require" +
             "('scheduler/unstable_mock'));\n\n" +
-            'For more info, visit https://fb.me/react-mock-scheduler',
+            'For more info, visit https://reactjs.org/link/mock-scheduler',
         );
       } else if (warnAboutUnmockedScheduler === true) {
         didWarnAboutUnmockedScheduler = true;
@@ -3711,7 +3590,7 @@ export function warnIfUnmockedScheduler(fiber: Fiber) {
             // Break up requires to avoid accidentally parsing them as dependencies.
             "jest.mock('scheduler', () => require" +
             "('scheduler/unstable_mock'));\n\n" +
-            'For more info, visit https://fb.me/react-mock-scheduler',
+            'For more info, visit https://reactjs.org/link/mock-scheduler',
         );
       }
     }

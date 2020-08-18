@@ -30,6 +30,7 @@ import {
   enableDebugTracing,
   enableSchedulingProfiler,
   enableScopeAPI,
+  skipUnmountedBoundaries,
 } from 'shared/ReactFeatureFlags';
 import ReactSharedInternals from 'shared/ReactSharedInternals';
 import invariant from 'shared/invariant';
@@ -741,7 +742,7 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
 
 // This is the entry point for every concurrent task, i.e. anything that
 // goes through Scheduler.
-function performConcurrentWorkOnRoot(root, didTimeout) {
+function performConcurrentWorkOnRoot(root) {
   // Since we know we're in a React event, we can clear the current
   // event time. The next update will compute a new event time.
   currentEventTime = NoTimestamp;
@@ -778,19 +779,6 @@ function performConcurrentWorkOnRoot(root, didTimeout) {
   );
   if (lanes === NoLanes) {
     // Defensive coding. This is never expected to happen.
-    return null;
-  }
-
-  // TODO: We only check `didTimeout` defensively, to account for a Scheduler
-  // bug where `shouldYield` sometimes returns `true` even if `didTimeout` is
-  // true, which leads to an infinite loop. Once the bug in Scheduler is
-  // fixed, we can remove this, since we track expiration ourselves.
-  if (didTimeout) {
-    // Something expired. Flush synchronously until there's no expired
-    // work left.
-    markRootExpired(root, lanes);
-    // This will schedule a synchronous callback.
-    ensureRootIsScheduled(root, now());
     return null;
   }
 
@@ -1454,7 +1442,7 @@ function handleError(root, thrownValue): void {
   } while (true);
 }
 
-function pushDispatcher(root) {
+function pushDispatcher() {
   const prevDispatcher = ReactCurrentDispatcher.current;
   ReactCurrentDispatcher.current = ContextOnlyDispatcher;
   if (prevDispatcher === null) {
@@ -1570,7 +1558,7 @@ export function renderHasNotSuspendedYet(): boolean {
 function renderRootSync(root: FiberRoot, lanes: Lanes) {
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
-  const prevDispatcher = pushDispatcher(root);
+  const prevDispatcher = pushDispatcher();
 
   // If the root or lanes have changed, throw out the existing stack
   // and prepare a fresh one. Otherwise we'll continue where we left off.
@@ -1645,7 +1633,7 @@ function workLoopSync() {
 function renderRootConcurrent(root: FiberRoot, lanes: Lanes) {
   const prevExecutionContext = executionContext;
   executionContext |= RenderContext;
-  const prevDispatcher = pushDispatcher(root);
+  const prevDispatcher = pushDispatcher();
 
   // If the root or lanes have changed, throw out the existing stack
   // and prepare a fresh one. Otherwise we'll continue where we left off.
@@ -2097,7 +2085,7 @@ function commitRootImpl(root, renderPriorityLevel) {
         if (hasCaughtError()) {
           invariant(nextEffect !== null, 'Should be working on an effect.');
           const error = clearCaughtError();
-          captureCommitPhaseError(nextEffect, error);
+          captureCommitPhaseError(nextEffect, nextEffect.return, error);
           nextEffect = nextEffect.nextEffect;
         }
       } else {
@@ -2105,7 +2093,7 @@ function commitRootImpl(root, renderPriorityLevel) {
           commitBeforeMutationEffects();
         } catch (error) {
           invariant(nextEffect !== null, 'Should be working on an effect.');
-          captureCommitPhaseError(nextEffect, error);
+          captureCommitPhaseError(nextEffect, nextEffect.return, error);
           nextEffect = nextEffect.nextEffect;
         }
       }
@@ -2134,7 +2122,7 @@ function commitRootImpl(root, renderPriorityLevel) {
         if (hasCaughtError()) {
           invariant(nextEffect !== null, 'Should be working on an effect.');
           const error = clearCaughtError();
-          captureCommitPhaseError(nextEffect, error);
+          captureCommitPhaseError(nextEffect, nextEffect.return, error);
           nextEffect = nextEffect.nextEffect;
         }
       } else {
@@ -2142,7 +2130,7 @@ function commitRootImpl(root, renderPriorityLevel) {
           commitMutationEffects(root, renderPriorityLevel);
         } catch (error) {
           invariant(nextEffect !== null, 'Should be working on an effect.');
-          captureCommitPhaseError(nextEffect, error);
+          captureCommitPhaseError(nextEffect, nextEffect.return, error);
           nextEffect = nextEffect.nextEffect;
         }
       }
@@ -2169,7 +2157,7 @@ function commitRootImpl(root, renderPriorityLevel) {
         if (hasCaughtError()) {
           invariant(nextEffect !== null, 'Should be working on an effect.');
           const error = clearCaughtError();
-          captureCommitPhaseError(nextEffect, error);
+          captureCommitPhaseError(nextEffect, nextEffect.return, error);
           nextEffect = nextEffect.nextEffect;
         }
       } else {
@@ -2177,7 +2165,7 @@ function commitRootImpl(root, renderPriorityLevel) {
           commitLayoutEffects(root, lanes);
         } catch (error) {
           invariant(nextEffect !== null, 'Should be working on an effect.');
-          captureCommitPhaseError(nextEffect, error);
+          captureCommitPhaseError(nextEffect, nextEffect.return, error);
           nextEffect = nextEffect.nextEffect;
         }
       }
@@ -2378,7 +2366,10 @@ function commitBeforeMutationEffects() {
   }
 }
 
-function commitMutationEffects(root: FiberRoot, renderPriorityLevel) {
+function commitMutationEffects(
+  root: FiberRoot,
+  renderPriorityLevel: ReactPriorityLevel,
+) {
   // TODO: Should probably move the bulk of this function to commitWork.
   while (nextEffect !== null) {
     setCurrentDebugFiberInDEV(nextEffect);
@@ -2449,7 +2440,12 @@ function commitMutationEffects(root: FiberRoot, renderPriorityLevel) {
         break;
       }
       case Deletion: {
-        commitDeletion(root, nextEffect, renderPriorityLevel);
+        commitDeletion(
+          root,
+          nextEffect,
+          nextEffect.return,
+          renderPriorityLevel,
+        );
         break;
       }
     }
@@ -2660,7 +2656,7 @@ function flushPassiveEffectsImpl() {
         if (hasCaughtError()) {
           invariant(fiber !== null, 'Should be working on an effect.');
           const error = clearCaughtError();
-          captureCommitPhaseError(fiber, error);
+          captureCommitPhaseError(fiber, fiber.return, error);
         }
         resetCurrentDebugFiberInDEV();
       } else {
@@ -2681,7 +2677,7 @@ function flushPassiveEffectsImpl() {
           }
         } catch (error) {
           invariant(fiber !== null, 'Should be working on an effect.');
-          captureCommitPhaseError(fiber, error);
+          captureCommitPhaseError(fiber, fiber.return, error);
         }
       }
     }
@@ -2708,7 +2704,7 @@ function flushPassiveEffectsImpl() {
       if (hasCaughtError()) {
         invariant(fiber !== null, 'Should be working on an effect.');
         const error = clearCaughtError();
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
       resetCurrentDebugFiberInDEV();
     } else {
@@ -2730,7 +2726,7 @@ function flushPassiveEffectsImpl() {
         }
       } catch (error) {
         invariant(fiber !== null, 'Should be working on an effect.');
-        captureCommitPhaseError(fiber, error);
+        captureCommitPhaseError(fiber, fiber.return, error);
       }
     }
   }
@@ -2829,7 +2825,11 @@ function captureCommitPhaseErrorOnRoot(
   }
 }
 
-export function captureCommitPhaseError(sourceFiber: Fiber, error: mixed) {
+export function captureCommitPhaseError(
+  sourceFiber: Fiber,
+  nearestMountedAncestor: Fiber | null,
+  error: mixed,
+) {
   if (sourceFiber.tag === HostRoot) {
     // Error was thrown at the root. There is no parent, so the root
     // itself should capture it.
@@ -2837,7 +2837,13 @@ export function captureCommitPhaseError(sourceFiber: Fiber, error: mixed) {
     return;
   }
 
-  let fiber = sourceFiber.return;
+  let fiber = null;
+  if (skipUnmountedBoundaries) {
+    fiber = nearestMountedAncestor;
+  } else {
+    fiber = sourceFiber.return;
+  }
+
   while (fiber !== null) {
     if (fiber.tag === HostRoot) {
       captureCommitPhaseErrorOnRoot(fiber, sourceFiber, error);
@@ -2863,6 +2869,24 @@ export function captureCommitPhaseError(sourceFiber: Fiber, error: mixed) {
           markRootUpdated(root, SyncLane, eventTime);
           ensureRootIsScheduled(root, eventTime);
           schedulePendingInteractions(root, SyncLane);
+        } else {
+          // This component has already been unmounted.
+          // We can't schedule any follow up work for the root because the fiber is already unmounted,
+          // but we can still call the log-only boundary so the error isn't swallowed.
+          //
+          // TODO This is only a temporary bandaid for the old reconciler fork.
+          // We can delete this special case once the new fork is merged.
+          if (
+            typeof instance.componentDidCatch === 'function' &&
+            !isAlreadyFailedLegacyErrorBoundary(instance)
+          ) {
+            try {
+              instance.componentDidCatch(error, errorInfo);
+            } catch (errorToIgnore) {
+              // TODO Ignore this error? Rethrow it?
+              // This is kind of an edge case.
+            }
+          }
         }
         return;
       }
@@ -3296,7 +3320,7 @@ function warnAboutRenderPhaseUpdatesInDEV(fiber) {
             console.error(
               'Cannot update a component (`%s`) while rendering a ' +
                 'different component (`%s`). To locate the bad setState() call inside `%s`, ' +
-                'follow the stack trace as described in https://fb.me/setstate-in-render',
+                'follow the stack trace as described in https://reactjs.org/link/setstate-in-render',
               setStateComponentName,
               renderingComponentName,
               renderingComponentName,
@@ -3379,7 +3403,7 @@ export function warnIfNotCurrentlyActingEffectsInDEV(fiber: Fiber): void {
           '/* assert on the output */\n\n' +
           "This ensures that you're testing the behavior the user would see " +
           'in the browser.' +
-          ' Learn more at https://fb.me/react-wrap-tests-with-act',
+          ' Learn more at https://reactjs.org/link/wrap-tests-with-act',
         getComponentName(fiber.type),
       );
     }
@@ -3407,7 +3431,7 @@ function warnIfNotCurrentlyActingUpdatesInDEV(fiber: Fiber): void {
             '/* assert on the output */\n\n' +
             "This ensures that you're testing the behavior the user would see " +
             'in the browser.' +
-            ' Learn more at https://fb.me/react-wrap-tests-with-act',
+            ' Learn more at https://reactjs.org/link/wrap-tests-with-act',
           getComponentName(fiber.type),
         );
       } finally {
@@ -3445,7 +3469,7 @@ export function warnIfUnmockedScheduler(fiber: Fiber) {
             // Break up requires to avoid accidentally parsing them as dependencies.
             "jest.mock('scheduler', () => require" +
             "('scheduler/unstable_mock'));\n\n" +
-            'For more info, visit https://fb.me/react-mock-scheduler',
+            'For more info, visit https://reactjs.org/link/mock-scheduler',
         );
       } else if (warnAboutUnmockedScheduler === true) {
         didWarnAboutUnmockedScheduler = true;
@@ -3456,7 +3480,7 @@ export function warnIfUnmockedScheduler(fiber: Fiber) {
             // Break up requires to avoid accidentally parsing them as dependencies.
             "jest.mock('scheduler', () => require" +
             "('scheduler/unstable_mock'));\n\n" +
-            'For more info, visit https://fb.me/react-mock-scheduler',
+            'For more info, visit https://reactjs.org/link/mock-scheduler',
         );
       }
     }

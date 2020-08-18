@@ -676,7 +676,6 @@ export function markRootUpdated(
   updateLane: Lane,
   eventTime: number,
 ) {
-  debugger;
   root.pendingLanes |= updateLane;
 
   // TODO: Theoretically, any update to any lane can unblock any other lane. But

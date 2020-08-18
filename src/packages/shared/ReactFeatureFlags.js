@@ -18,7 +18,6 @@ export const enableDebugTracing = false;
 // Adds user timing marks for e.g. state updates, suspense, and work loop stuff,
 // for an experimental scheduling profiler tool.
 export const enableSchedulingProfiler = __PROFILE__ && __EXPERIMENTAL__;
-export const enableSchedulingProfilerComponentStacks = false;
 
 // Helps identify side effects in render-phase lifecycle hooks and setState
 // reducers by double invoking them in Strict Mode.
@@ -92,6 +91,12 @@ export const warnAboutSpreadingKeyToJSX = false;
 export const enableComponentStackLocations = true;
 
 export const enableNewReconciler = false;
+
+// Errors that are thrown while unmounting (or after in the case of passive effects)
+// should bypass any error boundaries that are also unmounting (or have unmounted)
+// and be handled by the nearest still-mounted boundary.
+// If there are no still-mounted boundaries, the errors should be rethrown.
+export const skipUnmountedBoundaries = false;
 
 // --------------------------
 // Future APIs to be deprecated
