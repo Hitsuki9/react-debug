@@ -50,7 +50,7 @@
 
 3. 添加环境变量
 
-```js
+```js{3,4,5}
 // config/webpack.config.js
 new webpack.DefinePlugin({
 + __DEV__: false,
