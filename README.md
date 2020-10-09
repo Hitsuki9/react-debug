@@ -65,30 +65,33 @@ new webpack.DefinePlugin({
 ```js
 // config/webpack.config.js
 // resolve
-{
+module.exports = function(webpackEnv) {
   // ...
-  alias: {
-+   'react-dom': path.resolve(__dirname, '../src/packages/react-dom'),
-+   'react-reconciler': path.resolve(__dirname, '../src/packages/react-reconciler'),
-+   'react': path.resolve(__dirname, '../src/packages/react'),
-+   './ReactFiberHostConfig': path.resolve(__dirname, '../src/packages/react-reconciler/src/forks/ReactFiberHostConfig.dom'),
+  return {
+    // ...
+    alias: {
++     'react-dom': path.resolve(__dirname, '../src/packages/react-dom'),
++     'react-reconciler': path.resolve(__dirname, '../src/packages/react-reconciler'),
++     'react': path.resolve(__dirname, '../src/packages/react'),
++     './ReactFiberHostConfig': path.resolve(__dirname, '../src/packages/react-reconciler/src/forks/ReactFiberHostConfig.dom'),
 
-+   'shared/ReactSharedInternals': path.resolve(__dirname, '../src/packages/react/src/ReactSharedInternals'),
-+   'shared': path.resolve(__dirname, '../src/packages/shared'),
++     'shared/ReactSharedInternals': path.resolve(__dirname, '../src/packages/react/src/ReactSharedInternals'),
++     'shared': path.resolve(__dirname, '../src/packages/shared'),
 
-+   'scheduler/tracing': path.resolve(__dirname, '../src/packages/scheduler/tracing'),
-+   'scheduler': path.resolve(__dirname, '../src/packages/scheduler/unstable_mock'),
-+   './SchedulerHostConfig': path.resolve(__dirname, '../src/packages/scheduler/src/forks/SchedulerHostConfig.default'),
-+   './src/SchedulerHostConfig.js': path.resolve(__dirname, '../src/packages/scheduler/src/forks/SchedulerHostConfig.mock'),
-    // Support React Native Web
-    // https://www.smashingmagazine.com/2016/08/a-glimpse-into-the-future-with-react-native-for-web/
-    'react-native': 'react-native-web',
-    // Allows for better profiling with ReactDevTools
-    ...(isEnvProductionProfile && {
-      'react-dom$': 'react-dom/profiling',
-      'scheduler/tracing': 'scheduler/tracing-profiling',
-    }),
-    ...(modules.webpackAliases || {}),
++     'scheduler/tracing': path.resolve(__dirname, '../src/packages/scheduler/tracing'),
++     'scheduler': path.resolve(__dirname, '../src/packages/scheduler/unstable_mock'),
++     './SchedulerHostConfig': path.resolve(__dirname, '../src/packages/scheduler/src/forks/SchedulerHostConfig.default'),
++     './src/SchedulerHostConfig.js': path.resolve(__dirname, '../src/packages/scheduler/src/forks/SchedulerHostConfig.mock'),
+      // Support React Native Web
+      // https://www.smashingmagazine.com/2016/08/a-glimpse-into-the-future-with-react-native-for-web/
+      'react-native': 'react-native-web',
+      // Allows for better profiling with ReactDevTools
+      ...(isEnvProductionProfile && {
+        'react-dom$': 'react-dom/profiling',
+        'scheduler/tracing': 'scheduler/tracing-profiling',
+      }),
+      ...(modules.webpackAliases || {}),
+    }
   }
 }
 ```
