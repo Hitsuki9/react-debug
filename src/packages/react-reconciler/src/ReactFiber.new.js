@@ -29,8 +29,7 @@ import {
   enableScopeAPI,
   enableBlocksAPI,
 } from 'shared/ReactFeatureFlags';
-import {NoEffect, Placement, StaticMask} from './ReactSideEffectTags';
-import {NoEffect as NoSubtreeEffect} from './ReactSubtreeTags';
+import {NoFlags, Placement, StaticMask} from './ReactFiberFlags';
 import {ConcurrentRoot, BlockingRoot} from './ReactRootTags';
 import {
   IndeterminateComponent,
@@ -144,13 +143,9 @@ function FiberNode(
   this.mode = mode;
 
   // Effects
-  this.effectTag = NoEffect;
-  this.subtreeTag = NoSubtreeEffect;
+  this.flags = NoFlags;
+  this.subtreeFlags = NoFlags;
   this.deletions = null;
-  this.nextEffect = null;
-
-  this.firstEffect = null;
-  this.lastEffect = null;
 
   this.lanes = NoLanes;
   this.childLanes = NoLanes;
@@ -288,13 +283,8 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
     workInProgress.type = current.type;
 
     // We already have an alternate.
-    workInProgress.subtreeTag = NoSubtreeEffect;
+    workInProgress.subtreeFlags = NoFlags;
     workInProgress.deletions = null;
-
-    // The effect list is no longer valid.
-    workInProgress.nextEffect = null;
-    workInProgress.firstEffect = null;
-    workInProgress.lastEffect = null;
 
     if (enableProfilerTimer) {
       // We intentionally reset, rather than copy, actualDuration & actualStartTime.
@@ -308,7 +298,7 @@ export function createWorkInProgress(current: Fiber, pendingProps: any): Fiber {
 
   // Reset all effects except static ones.
   // Static effects are not specific to a render.
-  workInProgress.effectTag = current.effectTag & StaticMask;
+  workInProgress.flags = current.flags & StaticMask;
   workInProgress.childLanes = current.childLanes;
   workInProgress.lanes = current.lanes;
 
@@ -372,12 +362,7 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
 
   // Reset the effect tag but keep any Placement tags, since that's something
   // that child fiber is setting, not the reconciliation.
-  workInProgress.effectTag &= Placement;
-
-  // The effect list is no longer valid.
-  workInProgress.nextEffect = null;
-  workInProgress.firstEffect = null;
-  workInProgress.lastEffect = null;
+  workInProgress.flags &= Placement;
 
   const current = workInProgress.alternate;
   if (current === null) {
@@ -386,6 +371,7 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
     workInProgress.lanes = renderLanes;
 
     workInProgress.child = null;
+    workInProgress.subtreeFlags = NoFlags;
     workInProgress.memoizedProps = null;
     workInProgress.memoizedState = null;
     workInProgress.updateQueue = null;
@@ -406,6 +392,8 @@ export function resetWorkInProgress(workInProgress: Fiber, renderLanes: Lanes) {
     workInProgress.lanes = current.lanes;
 
     workInProgress.child = current.child;
+    workInProgress.subtreeFlags = current.subtreeFlags;
+    workInProgress.deletions = null;
     workInProgress.memoizedProps = current.memoizedProps;
     workInProgress.memoizedState = current.memoizedState;
     workInProgress.updateQueue = current.updateQueue;
@@ -827,12 +815,9 @@ export function assignFiberPropertiesInDEV(
   target.memoizedState = source.memoizedState;
   target.dependencies = source.dependencies;
   target.mode = source.mode;
-  target.effectTag = source.effectTag;
-  target.subtreeTag = source.subtreeTag;
+  target.flags = source.flags;
+  target.subtreeFlags = source.subtreeFlags;
   target.deletions = source.deletions;
-  target.nextEffect = source.nextEffect;
-  target.firstEffect = source.firstEffect;
-  target.lastEffect = source.lastEffect;
   target.lanes = source.lanes;
   target.childLanes = source.childLanes;
   target.alternate = source.alternate;

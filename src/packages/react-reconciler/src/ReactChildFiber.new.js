@@ -15,7 +15,7 @@ import type {Fiber} from './ReactInternalTypes';
 import type {Lanes} from './ReactFiberLane';
 
 import getComponentName from 'shared/getComponentName';
-import {Deletion, Placement} from './ReactSideEffectTags';
+import {Deletion, Placement} from './ReactFiberFlags';
 import {
   getIteratorFn,
   REACT_ELEMENT_TYPE,
@@ -277,28 +277,13 @@ function ChildReconciler(shouldTrackSideEffects) {
       // Noop.
       return;
     }
-    // Deletions are added in reversed order so we add it to the front.
-    // At this point, the return fiber's effect list is empty except for
-    // deletions, so we can just append the deletion to the list. The remaining
-    // effects aren't added until the complete phase. Once we implement
-    // resuming, this may not be true.
-    // TODO (effects) Get rid of effects list update here.
-    const last = returnFiber.lastEffect;
-    if (last !== null) {
-      last.nextEffect = childToDelete;
-      returnFiber.lastEffect = childToDelete;
-    } else {
-      returnFiber.firstEffect = returnFiber.lastEffect = childToDelete;
-    }
     const deletions = returnFiber.deletions;
     if (deletions === null) {
       returnFiber.deletions = [childToDelete];
-      // TODO (effects) Rename this to better reflect its new usage (e.g. ChildDeletions)
-      returnFiber.effectTag |= Deletion;
+      returnFiber.flags |= Deletion;
     } else {
       deletions.push(childToDelete);
     }
-    childToDelete.nextEffect = null;
   }
 
   function deleteRemainingChildren(
@@ -365,7 +350,7 @@ function ChildReconciler(shouldTrackSideEffects) {
       const oldIndex = current.index;
       if (oldIndex < lastPlacedIndex) {
         // This is a move.
-        newFiber.effectTag = Placement;
+        newFiber.flags = Placement;
         return lastPlacedIndex;
       } else {
         // This item can stay in place.
@@ -373,7 +358,7 @@ function ChildReconciler(shouldTrackSideEffects) {
       }
     } else {
       // This is an insertion.
-      newFiber.effectTag = Placement;
+      newFiber.flags = Placement;
       return lastPlacedIndex;
     }
   }
@@ -382,7 +367,7 @@ function ChildReconciler(shouldTrackSideEffects) {
     // This is simpler for the single child case. We only need to do a
     // placement for inserting new children.
     if (shouldTrackSideEffects && newFiber.alternate === null) {
-      newFiber.effectTag = Placement;
+      newFiber.flags = Placement;
     }
     return newFiber;
   }

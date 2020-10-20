@@ -389,14 +389,11 @@ describe('SimpleEventPlugin', function() {
             <button
               ref={el => (button = el)}
               onClick={() => {
-                React.unstable_withSuspenseConfig(
-                  () => {
-                    this.setState(state => ({
-                      lowPriCount: state.lowPriCount + 1,
-                    }));
-                  },
-                  {timeoutMs: 5000},
-                );
+                React.unstable_startTransition(() => {
+                  this.setState(state => ({
+                    lowPriCount: state.lowPriCount + 1,
+                  }));
+                });
               }}>
               {text}
             </button>
@@ -503,6 +500,32 @@ describe('SimpleEventPlugin', function() {
       node.dispatchEvent(new MouseEvent('click'));
 
       expect(onClick).toHaveBeenCalledTimes(0);
+    });
+
+    it('registers passive handlers for events affected by the intervention', () => {
+      container = document.createElement('div');
+
+      const passiveEvents = [];
+      const nativeAddEventListener = container.addEventListener;
+      container.addEventListener = function(type, fn, options) {
+        if (options !== null && typeof options === 'object') {
+          if (options.passive) {
+            passiveEvents.push(type);
+          }
+        }
+        return nativeAddEventListener.apply(this, arguments);
+      };
+
+      ReactDOM.render(<div />, container);
+
+      expect(passiveEvents).toEqual([
+        'touchstart',
+        'touchstart',
+        'touchmove',
+        'touchmove',
+        'wheel',
+        'wheel',
+      ]);
     });
   });
 });

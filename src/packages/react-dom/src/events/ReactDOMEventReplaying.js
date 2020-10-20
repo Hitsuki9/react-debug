@@ -82,7 +82,6 @@ type PointerEvent = Event & {
 };
 
 import {IS_REPLAYED} from './EventSystemFlags';
-import {listenToNativeEvent} from './DOMPluginEventSystem';
 
 type QueuedReplayableEvent = {|
   blockedOn: null | Container | SuspenseInstance,
@@ -156,42 +155,8 @@ const discreteReplayableEvents: Array<DOMEventName> = [
   'submit',
 ];
 
-const continuousReplayableEvents: Array<DOMEventName> = [
-  'dragenter',
-  'dragleave',
-  'focusin',
-  'focusout',
-  'mouseover',
-  'mouseout',
-  'pointerover',
-  'pointerout',
-  'gotpointercapture',
-  'lostpointercapture',
-];
-
 export function isReplayableDiscreteEvent(eventType: DOMEventName): boolean {
   return discreteReplayableEvents.indexOf(eventType) > -1;
-}
-
-function trapReplayableEventForContainer(
-  domEventName: DOMEventName,
-  container: Container,
-) {
-  listenToNativeEvent(domEventName, false, ((container: any): Element), null);
-}
-
-export function eagerlyTrapReplayableEvents(
-  container: Container,
-  document: Document,
-) {
-  // Discrete
-  discreteReplayableEvents.forEach(domEventName => {
-    trapReplayableEventForContainer(domEventName, container);
-  });
-  // Continuous
-  continuousReplayableEvents.forEach(domEventName => {
-    trapReplayableEventForContainer(domEventName, container);
-  });
 }
 
 function createQueuedReplayableEvent(

@@ -13,8 +13,9 @@
 'use strict';
 
 let React;
-let ReactCache;
-let TextResource;
+let textCache;
+let readText;
+let resolveText;
 let ReactNoop;
 let Scheduler;
 let SchedulerTracing;
@@ -42,7 +43,6 @@ describe('ReactHooksWithNoopRenderer', () => {
     ReactNoop = require('react-noop-renderer');
     Scheduler = require('scheduler');
     SchedulerTracing = require('scheduler/tracing');
-    ReactCache = require('react-cache');
     useState = React.useState;
     useReducer = React.useReducer;
     useEffect = React.useEffect;
@@ -58,25 +58,56 @@ describe('ReactHooksWithNoopRenderer', () => {
     Suspense = React.Suspense;
     act = ReactNoop.act;
 
-    TextResource = ReactCache.unstable_createResource(
-      ([text, ms = 0]) => {
-        return new Promise((resolve, reject) =>
-          setTimeout(() => {
-            Scheduler.unstable_yieldValue(`Promise resolved [${text}]`);
-            resolve(text);
-          }, ms),
-        );
-      },
-      ([text, ms]) => text,
-    );
+    textCache = new Map();
+
+    readText = text => {
+      const record = textCache.get(text);
+      if (record !== undefined) {
+        switch (record.status) {
+          case 'pending':
+            throw record.promise;
+          case 'rejected':
+            throw Error('Failed to load: ' + text);
+          case 'resolved':
+            return text;
+        }
+      } else {
+        let ping;
+        const promise = new Promise(resolve => (ping = resolve));
+        const newRecord = {
+          status: 'pending',
+          ping: ping,
+          promise,
+        };
+        textCache.set(text, newRecord);
+        throw promise;
+      }
+    };
+
+    resolveText = text => {
+      const record = textCache.get(text);
+      if (record !== undefined) {
+        if (record.status === 'pending') {
+          Scheduler.unstable_yieldValue(`Promise resolved [${text}]`);
+          record.ping();
+          record.ping = null;
+          record.status = 'resolved';
+          clearTimeout(record.promise._timer);
+          record.promise = null;
+        }
+      } else {
+        const newRecord = {
+          ping: null,
+          status: 'resolved',
+          promise: null,
+        };
+        textCache.set(text, newRecord);
+      }
+    };
   });
 
   function span(prop) {
     return {type: 'span', hidden: false, children: [], prop};
-  }
-
-  function hiddenSpan(prop) {
-    return {type: 'span', children: [], prop, hidden: true};
   }
 
   function Text(props) {
@@ -87,12 +118,17 @@ describe('ReactHooksWithNoopRenderer', () => {
   function AsyncText(props) {
     const text = props.text;
     try {
-      TextResource.read([props.text, props.ms]);
+      readText(text);
       Scheduler.unstable_yieldValue(text);
       return <span prop={text} />;
     } catch (promise) {
       if (typeof promise.then === 'function') {
         Scheduler.unstable_yieldValue(`Suspend! [${text}]`);
+        if (typeof props.ms === 'number' && promise._timer === undefined) {
+          promise._timer = setTimeout(() => {
+            resolveText(text);
+          }, props.ms);
+        }
       } else {
         Scheduler.unstable_yieldValue(`Error! [${text}]`);
       }
@@ -1500,7 +1536,7 @@ describe('ReactHooksWithNoopRenderer', () => {
     it('does not show a warning when a component updates a childs state from within passive unmount function', () => {
       function Parent() {
         Scheduler.unstable_yieldValue('Parent');
-        const updaterRef = React.useRef(null);
+        const updaterRef = useRef(null);
         React.useEffect(() => {
           Scheduler.unstable_yieldValue('Parent passive create');
           return () => {
@@ -2576,7 +2612,7 @@ describe('ReactHooksWithNoopRenderer', () => {
       });
 
       // @gate new
-      it('should skip unmounted boundaries and use the nearest still-mounted boundary', () => {
+      it('should skip unmounted boundaries and use the nearest still-mounted boundary', () => {
         function Conditional({showChildren}) {
           if (showChildren) {
             return (
@@ -2697,6 +2733,144 @@ describe('ReactHooksWithNoopRenderer', () => {
 
         expect(ReactNoop.getChildren()).toEqual([]);
       });
+    });
+
+    it('calls passive effect destroy functions for memoized components', () => {
+      const Wrapper = ({children}) => children;
+      function Child() {
+        React.useEffect(() => {
+          Scheduler.unstable_yieldValue('passive create');
+          return () => {
+            Scheduler.unstable_yieldValue('passive destroy');
+          };
+        }, []);
+        React.useLayoutEffect(() => {
+          Scheduler.unstable_yieldValue('layout create');
+          return () => {
+            Scheduler.unstable_yieldValue('layout destroy');
+          };
+        }, []);
+        Scheduler.unstable_yieldValue('render');
+        return null;
+      }
+
+      const isEqual = (prevProps, nextProps) =>
+        prevProps.prop === nextProps.prop;
+      const MemoizedChild = React.memo(Child, isEqual);
+
+      act(() => {
+        ReactNoop.render(
+          <Wrapper>
+            <MemoizedChild key={1} />
+          </Wrapper>,
+        );
+      });
+      expect(Scheduler).toHaveYielded([
+        'render',
+        'layout create',
+        'passive create',
+      ]);
+
+      // Include at least one no-op (memoized) update to trigger original bug.
+      act(() => {
+        ReactNoop.render(
+          <Wrapper>
+            <MemoizedChild key={1} />
+          </Wrapper>,
+        );
+      });
+      expect(Scheduler).toHaveYielded([]);
+
+      act(() => {
+        ReactNoop.render(
+          <Wrapper>
+            <MemoizedChild key={2} />
+          </Wrapper>,
+        );
+      });
+      expect(Scheduler).toHaveYielded([
+        'render',
+        'layout destroy',
+        'layout create',
+        'passive destroy',
+        'passive create',
+      ]);
+
+      act(() => {
+        ReactNoop.render(null);
+      });
+      expect(Scheduler).toHaveYielded(['layout destroy', 'passive destroy']);
+    });
+
+    it('calls passive effect destroy functions for descendants of memoized components', () => {
+      const Wrapper = ({children}) => children;
+      function Child() {
+        return <Grandchild />;
+      }
+
+      function Grandchild() {
+        React.useEffect(() => {
+          Scheduler.unstable_yieldValue('passive create');
+          return () => {
+            Scheduler.unstable_yieldValue('passive destroy');
+          };
+        }, []);
+        React.useLayoutEffect(() => {
+          Scheduler.unstable_yieldValue('layout create');
+          return () => {
+            Scheduler.unstable_yieldValue('layout destroy');
+          };
+        }, []);
+        Scheduler.unstable_yieldValue('render');
+        return null;
+      }
+
+      const isEqual = (prevProps, nextProps) =>
+        prevProps.prop === nextProps.prop;
+      const MemoizedChild = React.memo(Child, isEqual);
+
+      act(() => {
+        ReactNoop.render(
+          <Wrapper>
+            <MemoizedChild key={1} />
+          </Wrapper>,
+        );
+      });
+      expect(Scheduler).toHaveYielded([
+        'render',
+        'layout create',
+        'passive create',
+      ]);
+
+      // Include at least one no-op (memoized) update to trigger original bug.
+      act(() => {
+        ReactNoop.render(
+          <Wrapper>
+            <MemoizedChild key={1} />
+          </Wrapper>,
+        );
+      });
+      expect(Scheduler).toHaveYielded([]);
+
+      act(() => {
+        ReactNoop.render(
+          <Wrapper>
+            <MemoizedChild key={2} />
+          </Wrapper>,
+        );
+      });
+      expect(Scheduler).toHaveYielded([
+        'render',
+        'layout destroy',
+        'layout create',
+        'passive destroy',
+        'passive create',
+      ]);
+
+      act(() => {
+        ReactNoop.render(null);
+      });
+      expect(Scheduler).toHaveYielded(['layout destroy', 'passive destroy']);
     });
   });
 
@@ -3028,91 +3202,6 @@ describe('ReactHooksWithNoopRenderer', () => {
     });
   });
 
-  describe('useRef', () => {
-    it('creates a ref object initialized with the provided value', () => {
-      jest.useFakeTimers();
-
-      function useDebouncedCallback(callback, ms, inputs) {
-        const timeoutID = useRef(-1);
-        useEffect(() => {
-          return function unmount() {
-            clearTimeout(timeoutID.current);
-          };
-        }, []);
-        const debouncedCallback = useCallback(
-          (...args) => {
-            clearTimeout(timeoutID.current);
-            timeoutID.current = setTimeout(callback, ms, ...args);
-          },
-          [callback, ms],
-        );
-        return useCallback(debouncedCallback, inputs);
-      }
-
-      let ping;
-      function App() {
-        ping = useDebouncedCallback(
-          value => {
-            Scheduler.unstable_yieldValue('ping: ' + value);
-          },
-          100,
-          [],
-        );
-        return null;
-      }
-
-      act(() => {
-        ReactNoop.render(<App />);
-      });
-      expect(Scheduler).toHaveYielded([]);
-
-      ping(1);
-      ping(2);
-      ping(3);
-
-      expect(Scheduler).toHaveYielded([]);
-
-      jest.advanceTimersByTime(100);
-
-      expect(Scheduler).toHaveYielded(['ping: 3']);
-
-      ping(4);
-      jest.advanceTimersByTime(20);
-      ping(5);
-      ping(6);
-      jest.advanceTimersByTime(80);
-
-      expect(Scheduler).toHaveYielded([]);
-
-      jest.advanceTimersByTime(20);
-      expect(Scheduler).toHaveYielded(['ping: 6']);
-    });
-
-    it('should return the same ref during re-renders', () => {
-      function Counter() {
-        const ref = useRef('val');
-        const [count, setCount] = useState(0);
-        const [firstRef] = useState(ref);
-
-        if (firstRef !== ref) {
-          throw new Error('should never change');
-        }
-
-        if (count < 3) {
-          setCount(count + 1);
-        }
-
-        return <Text text={ref.current} />;
-      }
-
-      ReactNoop.render(<Counter />);
-      expect(Scheduler).toFlushAndYield(['val']);
-
-      ReactNoop.render(<Counter />);
-      expect(Scheduler).toFlushAndYield(['val']);
-    });
-  });
-
   describe('useImperativeHandle', () => {
     it('does not update when deps are the same', () => {
       const INCREMENT = 'INCREMENT';
@@ -3235,7 +3324,7 @@ describe('ReactHooksWithNoopRenderer', () => {
           <Suspense
             fallback={<Text text={`Loading... Pending: ${isPending}`} />}>
             {show ? (
-              <AsyncText ms={2000} text={`After... Pending: ${isPending}`} />
+              <AsyncText text={`After... Pending: ${isPending}`} />
             ) : (
               <Text text={`Before... Pending: ${isPending}`} />
             )}
@@ -3265,96 +3354,18 @@ describe('ReactHooksWithNoopRenderer', () => {
         Scheduler.unstable_advanceTime(500);
         await advanceTimers(500);
 
-        Scheduler.unstable_advanceTime(1000);
-        await advanceTimers(1000);
+        // Even after a long amount of time, we still don't show a placeholder.
+        Scheduler.unstable_advanceTime(100000);
+        await advanceTimers(100000);
         expect(ReactNoop.getChildren()).toEqual([
-          hiddenSpan('Before... Pending: true'),
-          span('Loading... Pending: false'),
+          span('Before... Pending: true'),
         ]);
 
-        Scheduler.unstable_advanceTime(500);
-        await advanceTimers(500);
+        await resolveText('After... Pending: false');
         expect(Scheduler).toHaveYielded([
           'Promise resolved [After... Pending: false]',
         ]);
         expect(Scheduler).toFlushAndYield(['After... Pending: false']);
-        expect(ReactNoop.getChildren()).toEqual([
-          span('After... Pending: false'),
-        ]);
-      });
-    });
-    // @gate experimental
-    it('delays showing loading state until after busyDelayMs + busyMinDurationMs', async () => {
-      let transition;
-      function App() {
-        const [show, setShow] = useState(false);
-        const [startTransition, isPending] = useTransition({
-          busyDelayMs: 1000,
-          busyMinDurationMs: 2000,
-        });
-        transition = () => {
-          startTransition(() => {
-            setShow(true);
-          });
-        };
-        return (
-          <Suspense
-            fallback={<Text text={`Loading... Pending: ${isPending}`} />}>
-            {show ? (
-              <AsyncText ms={2000} text={`After... Pending: ${isPending}`} />
-            ) : (
-              <Text text={`Before... Pending: ${isPending}`} />
-            )}
-          </Suspense>
-        );
-      }
-      ReactNoop.render(<App />);
-      expect(Scheduler).toFlushAndYield(['Before... Pending: false']);
-      expect(ReactNoop.getChildren()).toEqual([
-        span('Before... Pending: false'),
-      ]);
-
-      await act(async () => {
-        Scheduler.unstable_runWithPriority(
-          Scheduler.unstable_UserBlockingPriority,
-          transition,
-        );
-
-        expect(Scheduler).toFlushAndYield([
-          'Before... Pending: true',
-          'Suspend! [After... Pending: false]',
-          'Loading... Pending: false',
-        ]);
-        expect(ReactNoop.getChildren()).toEqual([
-          span('Before... Pending: true'),
-        ]);
-
-        Scheduler.unstable_advanceTime(1000);
-        await advanceTimers(1000);
-
-        // Resolve the promise. The whole tree has now completed. However,
-        // because we exceeded the busy threshold, we won't commit the
-        // result yet.
-        Scheduler.unstable_advanceTime(1000);
-        await advanceTimers(1000);
-        expect(Scheduler).toHaveYielded([
-          'Promise resolved [After... Pending: false]',
-        ]);
-        expect(Scheduler).toFlushAndYield(['After... Pending: false']);
-        expect(ReactNoop.getChildren()).toEqual([
-          span('Before... Pending: true'),
-        ]);
-
-        // Advance time until just before the `busyMinDuration` threshold.
-        Scheduler.unstable_advanceTime(999);
-        await advanceTimers(999);
-        expect(ReactNoop.getChildren()).toEqual([
-          span('Before... Pending: true'),
-        ]);
-
-        // Advance time just a bit more. Now we complete the transition.
-        Scheduler.unstable_advanceTime(300);
-        await advanceTimers(300);
         expect(ReactNoop.getChildren()).toEqual([
           span('After... Pending: false'),
         ]);
@@ -3364,9 +3375,9 @@ describe('ReactHooksWithNoopRenderer', () => {
 
   describe('useDeferredValue', () => {
     // @gate experimental
-    it('defers text value until specified timeout', async () => {
+    it('defers text value', async () => {
       function TextBox({text}) {
-        return <AsyncText ms={1000} text={text} />;
+        return <AsyncText text={text} />;
       }
 
       let _setText;
@@ -3393,8 +3404,7 @@ describe('ReactHooksWithNoopRenderer', () => {
       expect(Scheduler).toHaveYielded(['A', 'Suspend! [A]', 'Loading']);
       expect(ReactNoop.getChildren()).toEqual([span('A'), span('Loading')]);
 
-      Scheduler.unstable_advanceTime(1000);
-      await advanceTimers(1000);
+      await resolveText('A');
       expect(Scheduler).toHaveYielded(['Promise resolved [A]']);
       expect(Scheduler).toFlushAndYield(['A']);
       expect(ReactNoop.getChildren()).toEqual([span('A'), span('A')]);
@@ -3419,22 +3429,16 @@ describe('ReactHooksWithNoopRenderer', () => {
       expect(Scheduler).toHaveYielded([]);
       expect(ReactNoop.getChildren()).toEqual([span('B'), span('A')]);
 
-      await act(async () => {
-        Scheduler.unstable_advanceTime(500);
-        await advanceTimers(500);
-      });
-      expect(Scheduler).toHaveYielded([]);
-      expect(ReactNoop.getChildren()).toEqual([
-        span('B'),
-        hiddenSpan('A'),
-        span('Loading'),
-      ]);
+      // Even after a long amount of time, we don't show a fallback
+      Scheduler.unstable_advanceTime(100000);
+      await advanceTimers(100000);
+      expect(Scheduler).toFlushAndYield([]);
+      expect(ReactNoop.getChildren()).toEqual([span('B'), span('A')]);
 
       await act(async () => {
-        Scheduler.unstable_advanceTime(250);
-        await advanceTimers(250);
+        await resolveText('B');
       });
-      expect(Scheduler).toHaveYielded(['Promise resolved [B]', 'B']);
+      expect(Scheduler).toHaveYielded(['Promise resolved [B]', 'B', 'B']);
       expect(ReactNoop.getChildren()).toEqual([span('B'), span('B')]);
     });
   });

@@ -9,4 +9,5 @@ const Block = (
 
 console.log(Block);
 
+debugger;
 ReactDOM.render(Block, document.getElementById('root'));
