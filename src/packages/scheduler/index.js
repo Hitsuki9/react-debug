@@ -1,10 +1,7 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
 'use strict';
 
-export * from './src/Scheduler';
+if (process.env.NODE_ENV === 'production') {
+  module.exports = require('./cjs/scheduler.production.min.js');
+} else {
+  module.exports = require('./cjs/scheduler.development.js');
+}

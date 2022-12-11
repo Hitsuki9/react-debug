@@ -1,16 +1,17 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
+'use strict';
 
-export {
-  renderToString,
-  renderToStaticMarkup,
-  renderToNodeStream,
-  renderToStaticNodeStream,
-  version,
-} from './src/server/ReactDOMServerBrowser';
+var l, s;
+if (process.env.NODE_ENV === 'production') {
+  l = require('./cjs/react-dom-server-legacy.browser.production.min.js');
+  s = require('./cjs/react-dom-server.browser.production.min.js');
+} else {
+  l = require('./cjs/react-dom-server-legacy.browser.development.js');
+  s = require('./cjs/react-dom-server.browser.development.js');
+}
+
+exports.version = l.version;
+exports.renderToString = l.renderToString;
+exports.renderToStaticMarkup = l.renderToStaticMarkup;
+exports.renderToNodeStream = l.renderToNodeStream;
+exports.renderToStaticNodeStream = l.renderToStaticNodeStream;
+exports.renderToReadableStream = s.renderToReadableStream;
