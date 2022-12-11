@@ -66,7 +66,7 @@ function getPlugins(
 
 现在我们已经能够构建这几个包了，但是缺少了 sourcemap 文件来将构建后的代码映射到源码上，所以我们需要再次修改构建脚本：
 
-```js {18}
+```js
 // scripts/rollup/build.js
 function getRollupOutputOptions(
   outputPath,
@@ -84,7 +84,7 @@ function getRollupOutputOptions(
     freeze: !isProduction,
     interop: false,
     name: globalName,
-    sourcemap: true,
++   sourcemap: true,
     esModule: false
   };
 }
