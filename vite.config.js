@@ -14,5 +14,11 @@ export default defineConfig({
     include: ['react-dom/client'],
     force: true
   },
-  plugins: [react()]
+  plugins: [react()],
+  build: {
+    sourcemap: true,
+    commonjsOptions: {
+      include: ['src/packages/**']
+    }
+  }
 });
