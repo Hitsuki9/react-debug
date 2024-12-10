@@ -20,7 +20,9 @@ function pop(heap) {
   var last = heap.pop();
 
   if (last !== first) {
-    heap[0] = last;
+    // $FlowFixMe[incompatible-type]
+    heap[0] = last; // $FlowFixMe[incompatible-call]
+
     siftDown(heap, last, 0);
   }
 
@@ -95,9 +97,10 @@ function markTaskErrored(task, ms) {
 }
 
 /* eslint-disable no-var */
-// Max 31 bit integer. The max integer size in V8 for 32-bit systems.
+
 // Math.pow(2, 30) - 1
 // 0b111111111111111111111111111111
+
 var maxSigned31BitInt = 1073741823; // Times out immediately
 
 var IMMEDIATE_PRIORITY_TIMEOUT = -1; // Eventually times out
@@ -189,21 +192,7 @@ function flushWork(hasTimeRemaining, initialTime) {
   var previousPriorityLevel = currentPriorityLevel;
 
   try {
-    if (enableProfiling) {
-      try {
-        return workLoop(hasTimeRemaining, initialTime);
-      } catch (error) {
-        if (currentTask !== null) {
-          var currentTime = getCurrentTime(); // $FlowFixMe[incompatible-call] found when upgrading Flow
-
-          markTaskErrored(currentTask, currentTime); // $FlowFixMe[incompatible-use] found when upgrading Flow
-
-          currentTask.isQueued = false;
-        }
-
-        throw error;
-      }
-    } else {
+    var currentTime; if (enableProfiling) ; else {
       // No catch in prod code path.
       return workLoop(hasTimeRemaining, initialTime);
     }
@@ -332,6 +321,7 @@ function unstable_next(eventHandler) {
 
 function unstable_wrapCallback(callback) {
   var parentPriorityLevel = currentPriorityLevel; // $FlowFixMe[incompatible-return]
+  // $FlowFixMe[missing-this-annot]
 
   return function () {
     // This is a fork of runWithPriority, inlined for performance.
@@ -617,7 +607,7 @@ function unstable_flushAllWithoutAsserting() {
   }
 }
 
-function unstable_clearYields() {
+function unstable_clearLog() {
   if (yieldedValues === null) {
     return [];
   }
@@ -639,7 +629,7 @@ function unstable_flushAll() {
   }
 }
 
-function unstable_yieldValue(value) {
+function log(value) {
   // eslint-disable-next-line react-internal/no-production-logging
   if (console.log.name === 'disabledLog' || disableYieldValue) {
     // If console.log has been patched, we assume we're in render
@@ -674,8 +664,9 @@ function unstable_advanceTime(ms) {
 function requestPaint() {
   needsPaint = true;
 }
-var unstable_Profiling =  null;
+var unstable_Profiling = null;
 
+exports.log = log;
 exports.reset = reset;
 exports.unstable_IdlePriority = IdlePriority;
 exports.unstable_ImmediatePriority = ImmediatePriority;
@@ -685,7 +676,7 @@ exports.unstable_Profiling = unstable_Profiling;
 exports.unstable_UserBlockingPriority = UserBlockingPriority;
 exports.unstable_advanceTime = unstable_advanceTime;
 exports.unstable_cancelCallback = unstable_cancelCallback;
-exports.unstable_clearYields = unstable_clearYields;
+exports.unstable_clearLog = unstable_clearLog;
 exports.unstable_continueExecution = unstable_continueExecution;
 exports.unstable_flushAll = unstable_flushAll;
 exports.unstable_flushAllWithoutAsserting = unstable_flushAllWithoutAsserting;
@@ -705,5 +696,4 @@ exports.unstable_scheduleCallback = unstable_scheduleCallback;
 exports.unstable_setDisableYieldValue = setDisableYieldValue;
 exports.unstable_shouldYield = shouldYieldToHost;
 exports.unstable_wrapCallback = unstable_wrapCallback;
-exports.unstable_yieldValue = unstable_yieldValue;
 //# sourceMappingURL=scheduler-unstable_mock.development.js.map
