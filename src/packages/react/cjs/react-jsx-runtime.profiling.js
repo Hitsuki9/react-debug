@@ -3,11 +3,6 @@
 const REACT_ELEMENT_TYPE = Symbol.for('react.transitional.element') ;
 const REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
 
-function getOwner() {
-
-  return null;
-}
-
 function hasValidKey(config) {
 
   return config.key !== undefined;
@@ -18,23 +13,11 @@ function hasValidKey(config) {
  * will not work. Instead test $$typeof field against Symbol.for('react.transitional.element') to check
  * if something is a React Element.
  *
- * @param {*} type
- * @param {*} props
- * @param {*} key
- * @param {string|object} ref
- * @param {*} owner
- * @param {*} self A *temporary* helper to detect places where `this` is
- * different from the `owner` when React.createElement is called, so that we
- * can warn. We want to get rid of owner and replace string `ref`s with arrow
- * functions, and as long as `this` and owner are the same, there will be no
- * change in behavior.
- * @param {*} source An annotation object (added by a transpiler or otherwise)
- * indicating filename, line number, and/or other information.
  * @internal
  */
 
 
-function ReactElement(type, key, self, source, owner, props, debugStack, debugTask) {
+function ReactElement(type, key, props, owner, debugStack, debugTask) {
   // Ignore whatever was passed as the ref argument and treat `props.ref` as
   // the source of truth. The only thing we use this for is `element.ref`,
   // which will log a deprecation warning on access. In the next release, we
@@ -113,7 +96,7 @@ function jsxProd(type, config, maybeKey) {
     }
   }
 
-  return ReactElement(type, key, undefined, undefined, getOwner(), props);
+  return ReactElement(type, key, props);
 } // While `jsxDEV` should never be called when running in production, we do
 
 const jsx = jsxProd; // we may want to special case jsxs internally to take advantage of static children.

@@ -1,19 +1,19 @@
 'use strict';
 
-var ReactVersion = '19.0.0';
+var ReactVersion = '19.2.4';
 
 const REACT_ELEMENT_TYPE = Symbol.for('react.transitional.element') ;
 const REACT_PORTAL_TYPE = Symbol.for('react.portal');
 const REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
 const REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode');
 const REACT_PROFILER_TYPE = Symbol.for('react.profiler');
-
 const REACT_CONSUMER_TYPE = Symbol.for('react.consumer');
 const REACT_CONTEXT_TYPE = Symbol.for('react.context');
 const REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
 const REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
 const REACT_MEMO_TYPE = Symbol.for('react.memo');
 const REACT_LAZY_TYPE = Symbol.for('react.lazy');
+const REACT_ACTIVITY_TYPE = Symbol.for('react.activity');
 const MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
 const FAUX_ITERATOR_SYMBOL = '@@iterator';
 function getIteratorFn(maybeIterable) {
@@ -205,6 +205,8 @@ function isArray(a) {
   return isArrayImpl(a);
 }
 
+function noop() {}
+
 const ReactSharedInternals = {
   H: null,
   A: null,
@@ -214,16 +216,6 @@ const ReactSharedInternals = {
 
 // $FlowFixMe[method-unbinding]
 const hasOwnProperty = Object.prototype.hasOwnProperty;
-
-function getOwner() {
-
-  return null;
-}
-
-function hasValidRef(config) {
-
-  return config.ref !== undefined;
-}
 
 function hasValidKey(config) {
 
@@ -235,23 +227,11 @@ function hasValidKey(config) {
  * will not work. Instead test $$typeof field against Symbol.for('react.transitional.element') to check
  * if something is a React Element.
  *
- * @param {*} type
- * @param {*} props
- * @param {*} key
- * @param {string|object} ref
- * @param {*} owner
- * @param {*} self A *temporary* helper to detect places where `this` is
- * different from the `owner` when React.createElement is called, so that we
- * can warn. We want to get rid of owner and replace string `ref`s with arrow
- * functions, and as long as `this` and owner are the same, there will be no
- * change in behavior.
- * @param {*} source An annotation object (added by a transpiler or otherwise)
- * indicating filename, line number, and/or other information.
  * @internal
  */
 
 
-function ReactElement(type, key, self, source, owner, props, debugStack, debugTask) {
+function ReactElement(type, key, props, owner, debugStack, debugTask) {
   // Ignore whatever was passed as the ref argument and treat `props.ref` as
   // the source of truth. The only thing we use this for is `element.ref`,
   // which will log a deprecation warning on access. In the next release, we
@@ -336,11 +316,10 @@ function createElement(type, config, children) {
       }
     }
   }
-
-  return ReactElement(type, key, undefined, undefined, getOwner(), props);
+  return ReactElement(type, key, props);
 }
 function cloneAndReplaceKey(oldElement, newKey) {
-  const clonedElement = ReactElement(oldElement.type, newKey, undefined, undefined, undefined , oldElement.props);
+  const clonedElement = ReactElement(oldElement.type, newKey, oldElement.props);
 
   return clonedElement;
 }
@@ -360,17 +339,13 @@ function cloneElement(element, config, children) {
 
   let key = element.key; // Owner will be preserved, unless ref is overridden
 
-  let owner = undefined ;
-
   if (config != null) {
-    if (hasValidRef(config)) {
-      owner = undefined;
-    }
 
     if (hasValidKey(config)) {
 
       key = '' + config.key;
     } // Remaining properties override existing props
+
 
     for (propName in config) {
       if (hasOwnProperty.call(config, propName) && // Skip over reserved prop names
@@ -384,9 +359,7 @@ function cloneElement(element, config, children) {
       // if the property were missing. This is mostly for
       // backwards compatibility.
       !(propName === 'ref' && config.ref === undefined)) {
-        {
-          props[propName] = config[propName];
-        }
+        props[propName] = config[propName];
       }
     }
   } // Children can be more than one argument, and those are transferred onto
@@ -407,7 +380,7 @@ function cloneElement(element, config, children) {
     props.children = childArray;
   }
 
-  const clonedElement = ReactElement(element.type, key, undefined, undefined, owner, props);
+  const clonedElement = ReactElement(element.type, key, props);
 
   return clonedElement;
 }
@@ -471,8 +444,6 @@ function getElementKey(element, index) {
   return index.toString(36);
 }
 
-function noop$1() {}
-
 function resolveThenable(thenable) {
   switch (thenable.status) {
     case 'fulfilled':
@@ -495,7 +466,7 @@ function resolveThenable(thenable) {
           // some custom userspace implementation. We treat it as "pending".
           // Attach a dummy listener, to ensure that any lazy initialization can
           // happen. Flight lazily parses JSON when the value is actually awaited.
-          thenable.then(noop$1, noop$1);
+          thenable.then(noop, noop);
         } else {
           // This is an uncached thenable that we haven't seen before.
           // TODO: Detect infinite ping loops caused by uncached promises.
@@ -767,14 +738,11 @@ function createContext(defaultValue) {
     Provider: null,
     Consumer: null
   };
-
-  {
-    context.Provider = context;
-    context.Consumer = {
-      $$typeof: REACT_CONSUMER_TYPE,
-      _context: context
-    };
-  }
+  context.Provider = context;
+  context.Consumer = {
+    $$typeof: REACT_CONSUMER_TYPE,
+    _context: context
+  };
 
   return context;
 }
@@ -786,6 +754,7 @@ const Rejected = 2;
 
 function lazyInitializer(payload) {
   if (payload._status === Uninitialized) {
+
     const ctor = payload._result;
     const thenable = ctor(); // Transition to the next state.
     // This might throw either because it's missing or throws. If so, we treat it
@@ -881,7 +850,14 @@ function noopCache(fn) {
     return fn.apply(null, arguments);
   };
 }
+
 const cache = noopCache ;
+
+function noopCacheSignal() {
+  return null;
+}
+
+const cacheSignal = noopCacheSignal ;
 
 function resolveDispatcher() {
   const dispatcher = ReactSharedInternals.H;
@@ -909,14 +885,17 @@ function useRef(initialValue) {
   return dispatcher.useRef(initialValue);
 }
 function useEffect(create, deps) {
+
   const dispatcher = resolveDispatcher();
   return dispatcher.useEffect(create, deps);
 }
 function useInsertionEffect(create, deps) {
+
   const dispatcher = resolveDispatcher();
   return dispatcher.useInsertionEffect(create, deps);
 }
 function useLayoutEffect(create, deps) {
+
   const dispatcher = resolveDispatcher();
   return dispatcher.useLayoutEffect(create, deps);
 }
@@ -964,17 +943,18 @@ function useMemoCache(size) {
 
   return dispatcher.useMemoCache(size);
 }
-function useOptimistic(passthrough, reducer) {
+function useEffectEvent(callback) {
   const dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
 
+  return dispatcher.useEffectEvent(callback);
+}
+function useOptimistic(passthrough, reducer) {
+  const dispatcher = resolveDispatcher();
   return dispatcher.useOptimistic(passthrough, reducer);
 }
 function useActionState(action, initialState, permalink) {
-  {
-    const dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
-
-    return dispatcher.useActionState(action, initialState, permalink);
-  }
+  const dispatcher = resolveDispatcher();
+  return dispatcher.useActionState(action, initialState, permalink);
 }
 
 const reportGlobalError = typeof reportError === 'function' ? // In modern browsers, reportError will dispatch an error event,
@@ -1006,40 +986,43 @@ reportError : error => {
   console['error'](error);
 };
 
+function releaseAsyncTransition() {
+}
+
 function startTransition(scope, options) {
   const prevTransition = ReactSharedInternals.T;
   const currentTransition = {};
+
   ReactSharedInternals.T = currentTransition;
 
-  {
-    try {
-      const returnValue = scope();
-      const onStartTransitionFinish = ReactSharedInternals.S;
+  try {
+    const returnValue = scope();
+    const onStartTransitionFinish = ReactSharedInternals.S;
 
-      if (onStartTransitionFinish !== null) {
-        onStartTransitionFinish(currentTransition, returnValue);
-      }
-
-      if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
-        returnValue.then(noop, reportGlobalError);
-      }
-    } catch (error) {
-      reportGlobalError(error);
-    } finally {
-      ReactSharedInternals.T = prevTransition;
+    if (onStartTransitionFinish !== null) {
+      onStartTransitionFinish(currentTransition, returnValue);
     }
-  }
-}
 
-function noop() {}
+    if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
+      if (false) ;
 
-function act(callback) {
-  {
-    throw new Error('act(...) is not supported in production builds of React.');
+      returnValue.then(noop, reportGlobalError);
+    }
+  } catch (error) {
+    reportGlobalError(error);
+  } finally {
+
+    if (prevTransition !== null && currentTransition.types !== null) {
+
+      prevTransition.types = currentTransition.types;
+    }
+
+    ReactSharedInternals.T = prevTransition;
   }
 }
 
 var ReactCompilerRuntime = {
+  __proto__: null,
   c: useMemoCache
 };
 
@@ -1051,6 +1034,7 @@ const Children = {
   only: onlyChild
 };
 
+exports.Activity = REACT_ACTIVITY_TYPE;
 exports.Children = Children;
 exports.Component = Component;
 exports.Fragment = REACT_FRAGMENT_TYPE;
@@ -1060,8 +1044,8 @@ exports.StrictMode = REACT_STRICT_MODE_TYPE;
 exports.Suspense = REACT_SUSPENSE_TYPE;
 exports.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = ReactSharedInternals;
 exports.__COMPILER_RUNTIME = ReactCompilerRuntime;
-exports.act = act;
 exports.cache = cache;
+exports.cacheSignal = cacheSignal;
 exports.cloneElement = cloneElement;
 exports.createContext = createContext;
 exports.createElement = createElement;
@@ -1079,6 +1063,7 @@ exports.useContext = useContext;
 exports.useDebugValue = useDebugValue;
 exports.useDeferredValue = useDeferredValue;
 exports.useEffect = useEffect;
+exports.useEffectEvent = useEffectEvent;
 exports.useId = useId;
 exports.useImperativeHandle = useImperativeHandle;
 exports.useInsertionEffect = useInsertionEffect;

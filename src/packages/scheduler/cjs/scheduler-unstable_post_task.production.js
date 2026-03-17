@@ -162,12 +162,7 @@ function unstable_wrapCallback(callback) {
     }
   };
 }
-function unstable_forceFrameRate() {}
-function unstable_pauseExecution() {}
-function unstable_continueExecution() {}
-function unstable_getFirstCallbackNode() {
-  return null;
-} // Currently no profiling build
+function unstable_forceFrameRate() {} // Currently no profiling build
 
 const unstable_Profiling = null;
 
@@ -178,13 +173,10 @@ exports.unstable_NormalPriority = NormalPriority;
 exports.unstable_Profiling = unstable_Profiling;
 exports.unstable_UserBlockingPriority = UserBlockingPriority;
 exports.unstable_cancelCallback = unstable_cancelCallback;
-exports.unstable_continueExecution = unstable_continueExecution;
 exports.unstable_forceFrameRate = unstable_forceFrameRate;
 exports.unstable_getCurrentPriorityLevel = unstable_getCurrentPriorityLevel;
-exports.unstable_getFirstCallbackNode = unstable_getFirstCallbackNode;
 exports.unstable_next = unstable_next;
 exports.unstable_now = unstable_now;
-exports.unstable_pauseExecution = unstable_pauseExecution;
 exports.unstable_requestPaint = unstable_requestPaint;
 exports.unstable_runWithPriority = unstable_runWithPriority;
 exports.unstable_scheduleCallback = unstable_scheduleCallback;

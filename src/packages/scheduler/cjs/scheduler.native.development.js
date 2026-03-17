@@ -1,6 +1,5 @@
 'use strict';
 
-var enableSchedulerDebugging = false;
 var enableProfiling = false;
 var frameYieldMs = 5;
 var userBlockingPriorityTimeout = 250;
@@ -128,13 +127,14 @@ var maxSigned31BitInt = 1073741823; // Tasks are stored on a min heap
 var taskQueue = [];
 var timerQueue = []; // Incrementing id counter. Used to maintain insertion order.
 
-var taskIdCounter = 1; // Pausing the scheduler is useful for debugging.
+var taskIdCounter = 1;
 var currentTask = null;
 var currentPriorityLevel = NormalPriority; // This is set while performing work, to prevent re-entrance.
 
 var isPerformingWork = false;
 var isHostCallbackScheduled = false;
-var isHostTimeoutScheduled = false; // Capture local references to native APIs, in case a polyfill overrides them.
+var isHostTimeoutScheduled = false;
+var needsPaint = false; // Capture local references to native APIs, in case a polyfill overrides them.
 
 var localSetTimeout = typeof setTimeout === 'function' ? setTimeout : null;
 var localClearTimeout = typeof clearTimeout === 'function' ? clearTimeout : null;
@@ -211,10 +211,12 @@ function workLoop(initialTime) {
   advanceTimers(currentTime);
   currentTask = peek(taskQueue);
 
-  while (currentTask !== null && !(enableSchedulerDebugging )) {
-    if (currentTask.expirationTime > currentTime && shouldYieldToHost()) {
-      // This currentTask hasn't expired, and we've reached the deadline.
-      break;
+  while (currentTask !== null) {
+    {
+      if (currentTask.expirationTime > currentTime && shouldYieldToHost()) {
+        // This currentTask hasn't expired, and we've reached the deadline.
+        break;
+      }
     } // $FlowFixMe[incompatible-use] found when upgrading Flow
 
 
@@ -378,6 +380,11 @@ var frameInterval = frameYieldMs;
 var startTime = -1;
 
 function shouldYieldToHost() {
+  if (needsPaint) {
+    // Yield now.
+    return true;
+  }
+
   var timeElapsed = getCurrentTime() - startTime;
 
   if (timeElapsed < frameInterval) {
@@ -390,9 +397,17 @@ function shouldYieldToHost() {
   return true;
 }
 
-function requestPaint() {}
+function requestPaint() {
+  {
+    needsPaint = true;
+  }
+}
 
 var performWorkUntilDeadline = function () {
+  {
+    needsPaint = false;
+  }
+
   if (isMessageLoopRunning) {
     var currentTime = getCurrentTime(); // Keep track of the start time so we can measure how long the main thread
     // has been blocked.
@@ -493,9 +508,6 @@ var unstable_now = typeof nativeRuntimeScheduler !== 'undefined' ? nativeRuntime
 var unstable_next = throwNotImplemented;
 var unstable_runWithPriority = throwNotImplemented;
 var unstable_wrapCallback = throwNotImplemented;
-var unstable_continueExecution = throwNotImplemented;
-var unstable_pauseExecution = throwNotImplemented;
-var unstable_getFirstCallbackNode = throwNotImplemented;
 var unstable_forceFrameRate = throwNotImplemented;
 var unstable_Profiling = null;
 
@@ -510,13 +522,10 @@ exports.unstable_NormalPriority = unstable_NormalPriority;
 exports.unstable_Profiling = unstable_Profiling;
 exports.unstable_UserBlockingPriority = unstable_UserBlockingPriority;
 exports.unstable_cancelCallback = unstable_cancelCallback;
-exports.unstable_continueExecution = unstable_continueExecution;
 exports.unstable_forceFrameRate = unstable_forceFrameRate;
 exports.unstable_getCurrentPriorityLevel = unstable_getCurrentPriorityLevel;
-exports.unstable_getFirstCallbackNode = unstable_getFirstCallbackNode;
 exports.unstable_next = unstable_next;
 exports.unstable_now = unstable_now;
-exports.unstable_pauseExecution = unstable_pauseExecution;
 exports.unstable_requestPaint = unstable_requestPaint;
 exports.unstable_runWithPriority = unstable_runWithPriority;
 exports.unstable_scheduleCallback = unstable_scheduleCallback;

@@ -1,6 +1,5 @@
 'use strict';
 
-const enableSchedulerDebugging = false;
 const enableProfiling = false;
 
 function push(heap, node) {
@@ -114,7 +113,7 @@ var IDLE_PRIORITY_TIMEOUT = maxSigned31BitInt; // Tasks are stored on a min heap
 var taskQueue = [];
 var timerQueue = []; // Incrementing id counter. Used to maintain insertion order.
 
-var taskIdCounter = 1; // Pausing the scheduler is useful for debugging.
+var taskIdCounter = 1;
 var currentTask = null;
 var currentPriorityLevel = NormalPriority; // This is set while performing work, to prevent re-entrance.
 
@@ -208,7 +207,7 @@ function workLoop(hasTimeRemaining, initialTime) {
   advanceTimers(currentTime);
   currentTask = peek(taskQueue);
 
-  while (currentTask !== null && !(enableSchedulerDebugging )) {
+  while (currentTask !== null) {
     if (currentTask.expirationTime > currentTime && (!hasTimeRemaining || shouldYieldToHost())) {
       // This currentTask hasn't expired, and we've reached the deadline.
       break;
@@ -417,21 +416,6 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   }
 
   return newTask;
-}
-
-function unstable_pauseExecution() {
-}
-
-function unstable_continueExecution() {
-
-  if (!isHostCallbackScheduled && !isPerformingWork) {
-    isHostCallbackScheduled = true;
-    requestHostCallback(flushWork);
-  }
-}
-
-function unstable_getFirstCallbackNode() {
-  return peek(taskQueue);
 }
 
 function unstable_cancelCallback(task) {
@@ -677,7 +661,6 @@ exports.unstable_UserBlockingPriority = UserBlockingPriority;
 exports.unstable_advanceTime = unstable_advanceTime;
 exports.unstable_cancelCallback = unstable_cancelCallback;
 exports.unstable_clearLog = unstable_clearLog;
-exports.unstable_continueExecution = unstable_continueExecution;
 exports.unstable_flushAll = unstable_flushAll;
 exports.unstable_flushAllWithoutAsserting = unstable_flushAllWithoutAsserting;
 exports.unstable_flushExpired = unstable_flushExpired;
@@ -685,11 +668,9 @@ exports.unstable_flushNumberOfYields = unstable_flushNumberOfYields;
 exports.unstable_flushUntilNextPaint = unstable_flushUntilNextPaint;
 exports.unstable_forceFrameRate = forceFrameRate;
 exports.unstable_getCurrentPriorityLevel = unstable_getCurrentPriorityLevel;
-exports.unstable_getFirstCallbackNode = unstable_getFirstCallbackNode;
 exports.unstable_hasPendingWork = unstable_hasPendingWork;
 exports.unstable_next = unstable_next;
 exports.unstable_now = getCurrentTime;
-exports.unstable_pauseExecution = unstable_pauseExecution;
 exports.unstable_requestPaint = requestPaint;
 exports.unstable_runWithPriority = unstable_runWithPriority;
 exports.unstable_scheduleCallback = unstable_scheduleCallback;

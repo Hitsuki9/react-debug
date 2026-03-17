@@ -1,6 +1,5 @@
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
 // or use @rollup/plugin-babel's `inputSourceMap` option
 // https://babeljs.io/docs/options#inputsourcemap
 import sourcemaps from 'rollup-plugin-sourcemaps2';
@@ -21,7 +20,6 @@ export default defineConfig(({ mode }) => {
       force: true
     },
     plugins: [
-      react(),
       isProd &&
         sourcemaps({
           include: ['src/packages/**']

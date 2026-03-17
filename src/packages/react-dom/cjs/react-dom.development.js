@@ -2,11 +2,11 @@
 
 var React = require('react');
 
-// This should line up with NoEventPriority from react-reconciler/src/ReactEventPriorities
-// but we can't depend on the react-reconciler from this isomorphic code.
-var NoEventPriority = 0;
-
 function noop() {}
+
+// but we can't depend on the react-reconciler from this isomorphic code.
+
+var NoEventPriority = 0;
 
 function requestFormReset$1(element) {
   throw new Error('Invalid form element. requestFormReset must be passed a form that was ' + 'rendered by React.');
@@ -51,12 +51,19 @@ var Internals = {
   findDOMNode: null
 };
 
-var ReactVersion = '19.0.0';
+var ReactVersion = '19.2.4';
 
 // -----------------------------------------------------------------------------
 // Land or remove (zero effort)
 //
 // Flags that can likely be deleted or landed without consequences
+// -----------------------------------------------------------------------------
+// None
+// -----------------------------------------------------------------------------
+// Killswitch
+//
+// Flags that exist solely to turn off a change in case it causes a regression
+// when it rolls out to prod. We should remove these as soon as possible.
 // -----------------------------------------------------------------------------
 // Chopping Block
 //
@@ -83,7 +90,7 @@ var DOCUMENT_FRAGMENT_NODE = 11;
 
 function isValidContainer(node) {
   return !!(node && (node.nodeType === ELEMENT_NODE || node.nodeType === DOCUMENT_NODE || node.nodeType === DOCUMENT_FRAGMENT_NODE || !disableCommentsAsDOMContainers  ));
-} // TODO: Remove this function which also includes comment nodes.
+}
 
 var REACT_PORTAL_TYPE = Symbol.for('react.portal');
 
@@ -506,18 +513,12 @@ function resolveDispatcher() {
 }
 
 function useFormStatus() {
-  {
-    var dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] We know this exists because of the feature check above.
-
-    return dispatcher.useHostTransitionStatus();
-  }
+  var dispatcher = resolveDispatcher();
+  return dispatcher.useHostTransitionStatus();
 }
 function useFormState(action, initialState, permalink) {
-  {
-    var dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
-
-    return dispatcher.useFormState(action, initialState, permalink);
-  }
+  var dispatcher = resolveDispatcher();
+  return dispatcher.useFormState(action, initialState, permalink);
 }
 function requestFormReset(form) {
   Internals.d

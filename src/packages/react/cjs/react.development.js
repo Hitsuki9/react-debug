@@ -1,35 +1,30 @@
 'use strict';
 
-var ReactVersion = '19.0.0';
+var ReactVersion = '19.2.4';
 
 // -----------------------------------------------------------------------------
 // Land or remove (zero effort)
 //
 // Flags that can likely be deleted or landed without consequences
 // -----------------------------------------------------------------------------
-
-var enableScopeAPI = false; // Experimental Create Event Handle API.
-var enableTransitionTracing = false;
-
-var enableLegacyHidden = false; // Enables unstable_avoidThisFallback feature in Fiber
+// None
+// -----------------------------------------------------------------------------
+// Killswitch
+//
+// Flags that exist solely to turn off a change in case it causes a regression
+// when it rolls out to prod. We should remove these as soon as possible.
+// -----------------------------------------------------------------------------
 // This allows us to land breaking changes to remove legacy mode APIs in experimental builds
 // before removing them in stable in the next Major
 
-var disableLegacyMode = true; // Make <Context> equivalent to <Context.Provider> instead of <Context.Consumer>
-
-var enableRenderableContext = true; // -----------------------------------------------------------------------------
-// stuff. Intended to enable React core members to more easily debug scheduling
-// issues in DEV builds.
-
-var enableDebugTracing = false;
+var disableLegacyMode = true; // -----------------------------------------------------------------------------
+var ownerStackLimit = 1e4;
 
 var REACT_ELEMENT_TYPE = Symbol.for('react.transitional.element') ;
 var REACT_PORTAL_TYPE = Symbol.for('react.portal');
 var REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
 var REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode');
 var REACT_PROFILER_TYPE = Symbol.for('react.profiler');
-var REACT_PROVIDER_TYPE = Symbol.for('react.provider'); // TODO: Delete with enableRenderableContext
-
 var REACT_CONSUMER_TYPE = Symbol.for('react.consumer');
 var REACT_CONTEXT_TYPE = Symbol.for('react.context');
 var REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
@@ -37,7 +32,7 @@ var REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
 var REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list');
 var REACT_MEMO_TYPE = Symbol.for('react.memo');
 var REACT_LAZY_TYPE = Symbol.for('react.lazy');
-var REACT_OFFSCREEN_TYPE = Symbol.for('react.offscreen');
+var REACT_ACTIVITY_TYPE = Symbol.for('react.activity');
 var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
 var FAUX_ITERATOR_SYMBOL = '@@iterator';
 function getIteratorFn(maybeIterable) {
@@ -284,6 +279,8 @@ function isArray(a) {
   return isArrayImpl(a);
 }
 
+function noop() {}
+
 /*
  * The `'' + value` pattern (used in perf-sensitive code) throws for Symbol
  * and Temporal.* types. See https://github.com/facebook/react/pull/22064.
@@ -369,7 +366,7 @@ function getContextName(type) {
   return type.displayName || 'Context';
 }
 
-var REACT_CLIENT_REFERENCE$2 = Symbol.for('react.client.reference'); // Note that the reconciler package should generally prefer to use getComponentNameFromFiber() instead.
+var REACT_CLIENT_REFERENCE = Symbol.for('react.client.reference'); // Note that the reconciler package should generally prefer to use getComponentNameFromFiber() instead.
 
 function getComponentNameFromType(type) {
   if (type == null) {
@@ -378,7 +375,7 @@ function getComponentNameFromType(type) {
   }
 
   if (typeof type === 'function') {
-    if (type.$$typeof === REACT_CLIENT_REFERENCE$2) {
+    if (type.$$typeof === REACT_CLIENT_REFERENCE) {
       // TODO: Create a convention for naming client references with debug info.
       return null;
     }
@@ -394,9 +391,6 @@ function getComponentNameFromType(type) {
     case REACT_FRAGMENT_TYPE:
       return 'Fragment';
 
-    case REACT_PORTAL_TYPE:
-      return 'Portal';
-
     case REACT_PROFILER_TYPE:
       return 'Profiler';
 
@@ -409,6 +403,9 @@ function getComponentNameFromType(type) {
     case REACT_SUSPENSE_LIST_TYPE:
       return 'SuspenseList';
 
+    case REACT_ACTIVITY_TYPE:
+      return 'Activity';
+
   }
 
   if (typeof type === 'object') {
@@ -419,23 +416,16 @@ function getComponentNameFromType(type) {
     }
 
     switch (type.$$typeof) {
-      case REACT_PROVIDER_TYPE:
-        {
-          return null;
-        }
+      case REACT_PORTAL_TYPE:
+        return 'Portal';
 
       case REACT_CONTEXT_TYPE:
         var context = type;
-
-        {
-          return getContextName(context) + '.Provider';
-        }
+        return getContextName(context);
 
       case REACT_CONSUMER_TYPE:
-        {
-          var consumer = type;
-          return getContextName(consumer._context) + '.Consumer';
-        }
+        var consumer = type;
+        return getContextName(consumer._context) + '.Consumer';
 
       case REACT_FORWARD_REF_TYPE:
         return getWrappedName(type, type.render, 'ForwardRef');
@@ -476,468 +466,43 @@ var ReactSharedInternals = {
 
 {
   ReactSharedInternals.actQueue = null;
+  ReactSharedInternals.asyncTransitions = 0;
   ReactSharedInternals.isBatchingLegacy = false;
   ReactSharedInternals.didScheduleLegacyUpdate = false;
   ReactSharedInternals.didUsePromise = false;
   ReactSharedInternals.thrownErrors = []; // Stack implementation injected by the current renderer.
 
   ReactSharedInternals.getCurrentStack = null;
+  ReactSharedInternals.recentlyCreatedOwnerStacks = 0;
 }
 
 // $FlowFixMe[method-unbinding]
 var hasOwnProperty = Object.prototype.hasOwnProperty;
 
-var REACT_CLIENT_REFERENCE$1 = Symbol.for('react.client.reference'); // This function is deprecated. Don't use. Only the renderer knows what a valid type is.
-// TODO: Delete this when enableOwnerStacks ships.
+var createTask = // eslint-disable-next-line react-internal/no-production-logging
+console.createTask ? // eslint-disable-next-line react-internal/no-production-logging
+console.createTask : function () {
+  return null;
+};
 
-function isValidElementType(type) {
-  if (typeof type === 'string' || typeof type === 'function') {
-    return true;
-  } // Note: typeof might be other than 'symbol' or 'number' (e.g. if it's a polyfill).
-
-
-  if (type === REACT_FRAGMENT_TYPE || type === REACT_PROFILER_TYPE || enableDebugTracing  || type === REACT_STRICT_MODE_TYPE || type === REACT_SUSPENSE_TYPE || type === REACT_SUSPENSE_LIST_TYPE || enableLegacyHidden  || type === REACT_OFFSCREEN_TYPE || enableScopeAPI  || enableTransitionTracing ) {
-    return true;
+function getTaskName(type) {
+  if (type === REACT_FRAGMENT_TYPE) {
+    return '<>';
   }
 
-  if (typeof type === 'object' && type !== null) {
-    if (type.$$typeof === REACT_LAZY_TYPE || type.$$typeof === REACT_MEMO_TYPE || type.$$typeof === REACT_CONTEXT_TYPE || !enableRenderableContext  || type.$$typeof === REACT_CONSUMER_TYPE || type.$$typeof === REACT_FORWARD_REF_TYPE || // This needs to include all possible module reference object
-    // types supported by any Flight configuration anywhere since
-    // we don't know which Flight build this will end up being used
-    // with.
-    type.$$typeof === REACT_CLIENT_REFERENCE$1 || type.getModuleId !== undefined) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// Helpers to patch console.logs to avoid logging during side-effect free
-// replaying on render function. This currently only patches the object
-// lazily which won't cover if the log function was extracted eagerly.
-// We could also eagerly patch the method.
-var disabledDepth = 0;
-var prevLog;
-var prevInfo;
-var prevWarn;
-var prevError;
-var prevGroup;
-var prevGroupCollapsed;
-var prevGroupEnd;
-
-function disabledLog() {}
-
-disabledLog.__reactDisabledLog = true;
-function disableLogs() {
-  {
-    if (disabledDepth === 0) {
-      /* eslint-disable react-internal/no-production-logging */
-      prevLog = console.log;
-      prevInfo = console.info;
-      prevWarn = console.warn;
-      prevError = console.error;
-      prevGroup = console.group;
-      prevGroupCollapsed = console.groupCollapsed;
-      prevGroupEnd = console.groupEnd; // https://github.com/facebook/react/issues/19099
-
-      var props = {
-        configurable: true,
-        enumerable: true,
-        value: disabledLog,
-        writable: true
-      }; // $FlowFixMe[cannot-write] Flow thinks console is immutable.
-
-      Object.defineProperties(console, {
-        info: props,
-        log: props,
-        warn: props,
-        error: props,
-        group: props,
-        groupCollapsed: props,
-        groupEnd: props
-      });
-    }
-
-    disabledDepth++;
-  }
-}
-function reenableLogs() {
-  {
-    disabledDepth--;
-
-    if (disabledDepth === 0) {
-      var props = {
-        configurable: true,
-        enumerable: true,
-        writable: true
-      }; // $FlowFixMe[cannot-write] Flow thinks console is immutable.
-
-      Object.defineProperties(console, {
-        log: assign({}, props, {
-          value: prevLog
-        }),
-        info: assign({}, props, {
-          value: prevInfo
-        }),
-        warn: assign({}, props, {
-          value: prevWarn
-        }),
-        error: assign({}, props, {
-          value: prevError
-        }),
-        group: assign({}, props, {
-          value: prevGroup
-        }),
-        groupCollapsed: assign({}, props, {
-          value: prevGroupCollapsed
-        }),
-        groupEnd: assign({}, props, {
-          value: prevGroupEnd
-        })
-      });
-    }
-
-    if (disabledDepth < 0) {
-      console.error('disabledDepth fell below zero. ' + 'This is a bug in React. Please file an issue.');
-    }
-  }
-}
-
-// This is forked in server builds where the default stack frame may be source mapped.
-var DefaultPrepareStackTrace = undefined;
-
-var prefix;
-var suffix;
-function describeBuiltInComponentFrame(name) {
-  {
-    if (prefix === undefined) {
-      // Extract the VM specific prefix used by each line.
-      try {
-        throw Error();
-      } catch (x) {
-        var match = x.stack.trim().match(/\n( *(at )?)/);
-        prefix = match && match[1] || '';
-        suffix = x.stack.indexOf('\n    at') > -1 ? // V8
-        ' (<anonymous>)' : // JSC/Spidermonkey
-        x.stack.indexOf('@') > -1 ? '@unknown:0:0' : // Other
-        '';
-      }
-    } // We use the prefix to ensure our stacks line up with native stack frames.
-
-
-    return '\n' + prefix + name + suffix;
-  }
-}
-var reentry = false;
-var componentFrameCache;
-
-{
-  var PossiblyWeakMap = typeof WeakMap === 'function' ? WeakMap : Map;
-  componentFrameCache = new PossiblyWeakMap();
-}
-/**
- * Leverages native browser/VM stack frames to get proper details (e.g.
- * filename, line + col number) for a single component in a component stack. We
- * do this by:
- *   (1) throwing and catching an error in the function - this will be our
- *       control error.
- *   (2) calling the component which will eventually throw an error that we'll
- *       catch - this will be our sample error.
- *   (3) diffing the control and sample error stacks to find the stack frame
- *       which represents our component.
- */
-
-
-function describeNativeComponentFrame(fn, construct) {
-  // If something asked for a stack inside a fake render, it should get ignored.
-  if (!fn || reentry) {
-    return '';
-  }
-
-  {
-    var frame = componentFrameCache.get(fn);
-
-    if (frame !== undefined) {
-      return frame;
-    }
-  }
-
-  reentry = true;
-  var previousPrepareStackTrace = Error.prepareStackTrace;
-  Error.prepareStackTrace = DefaultPrepareStackTrace;
-  var previousDispatcher = null;
-
-  {
-    previousDispatcher = ReactSharedInternals.H; // Set the dispatcher in DEV because this might be call in the render function
-    // for warnings.
-
-    ReactSharedInternals.H = null;
-    disableLogs();
+  if (typeof type === 'object' && type !== null && type.$$typeof === REACT_LAZY_TYPE) {
+    // We don't want to eagerly initialize the initializer in DEV mode so we can't
+    // call it to extract the type so we don't know the type of this component.
+    return '<...>';
   }
 
   try {
-    /**
-     * Finding a common stack frame between sample and control errors can be
-     * tricky given the different types and levels of stack trace truncation from
-     * different JS VMs. So instead we'll attempt to control what that common
-     * frame should be through this object method:
-     * Having both the sample and control errors be in the function under the
-     * `DescribeNativeComponentFrameRoot` property, + setting the `name` and
-     * `displayName` properties of the function ensures that a stack
-     * frame exists that has the method name `DescribeNativeComponentFrameRoot` in
-     * it for both control and sample stacks.
-     */
-    var RunInRootFrame = {
-      DetermineComponentFrameRoot: function () {
-        var control;
-
-        try {
-          // This should throw.
-          if (construct) {
-            // Something should be setting the props in the constructor.
-            var Fake = function () {
-              throw Error();
-            }; // $FlowFixMe[prop-missing]
-
-
-            Object.defineProperty(Fake.prototype, 'props', {
-              set: function () {
-                // We use a throwing setter instead of frozen or non-writable props
-                // because that won't throw in a non-strict mode function.
-                throw Error();
-              }
-            });
-
-            if (typeof Reflect === 'object' && Reflect.construct) {
-              // We construct a different control for this case to include any extra
-              // frames added by the construct call.
-              try {
-                Reflect.construct(Fake, []);
-              } catch (x) {
-                control = x;
-              }
-
-              Reflect.construct(fn, [], Fake);
-            } else {
-              try {
-                Fake.call();
-              } catch (x) {
-                control = x;
-              } // $FlowFixMe[prop-missing] found when upgrading Flow
-
-
-              fn.call(Fake.prototype);
-            }
-          } else {
-            try {
-              throw Error();
-            } catch (x) {
-              control = x;
-            } // TODO(luna): This will currently only throw if the function component
-            // tries to access React/ReactDOM/props. We should probably make this throw
-            // in simple components too
-
-
-            var maybePromise = fn(); // If the function component returns a promise, it's likely an async
-            // component, which we don't yet support. Attach a noop catch handler to
-            // silence the error.
-            // TODO: Implement component stacks for async client components?
-
-            if (maybePromise && typeof maybePromise.catch === 'function') {
-              maybePromise.catch(function () {});
-            }
-          }
-        } catch (sample) {
-          // This is inlined manually because closure doesn't do it for us.
-          if (sample && control && typeof sample.stack === 'string') {
-            return [sample.stack, control.stack];
-          }
-        }
-
-        return [null, null];
-      }
-    }; // $FlowFixMe[prop-missing]
-
-    RunInRootFrame.DetermineComponentFrameRoot.displayName = 'DetermineComponentFrameRoot';
-    var namePropDescriptor = Object.getOwnPropertyDescriptor(RunInRootFrame.DetermineComponentFrameRoot, 'name'); // Before ES6, the `name` property was not configurable.
-
-    if (namePropDescriptor && namePropDescriptor.configurable) {
-      // V8 utilizes a function's `name` property when generating a stack trace.
-      Object.defineProperty(RunInRootFrame.DetermineComponentFrameRoot, // Configurable properties can be updated even if its writable descriptor
-      // is set to `false`.
-      // $FlowFixMe[cannot-write]
-      'name', {
-        value: 'DetermineComponentFrameRoot'
-      });
-    }
-
-    var _RunInRootFrame$Deter = RunInRootFrame.DetermineComponentFrameRoot(),
-        sampleStack = _RunInRootFrame$Deter[0],
-        controlStack = _RunInRootFrame$Deter[1];
-
-    if (sampleStack && controlStack) {
-      // This extracts the first frame from the sample that isn't also in the control.
-      // Skipping one frame that we assume is the frame that calls the two.
-      var sampleLines = sampleStack.split('\n');
-      var controlLines = controlStack.split('\n');
-      var s = 0;
-      var c = 0;
-
-      while (s < sampleLines.length && !sampleLines[s].includes('DetermineComponentFrameRoot')) {
-        s++;
-      }
-
-      while (c < controlLines.length && !controlLines[c].includes('DetermineComponentFrameRoot')) {
-        c++;
-      } // We couldn't find our intentionally injected common root frame, attempt
-      // to find another common root frame by search from the bottom of the
-      // control stack...
-
-
-      if (s === sampleLines.length || c === controlLines.length) {
-        s = sampleLines.length - 1;
-        c = controlLines.length - 1;
-
-        while (s >= 1 && c >= 0 && sampleLines[s] !== controlLines[c]) {
-          // We expect at least one stack frame to be shared.
-          // Typically this will be the root most one. However, stack frames may be
-          // cut off due to maximum stack limits. In this case, one maybe cut off
-          // earlier than the other. We assume that the sample is longer or the same
-          // and there for cut off earlier. So we should find the root most frame in
-          // the sample somewhere in the control.
-          c--;
-        }
-      }
-
-      for (; s >= 1 && c >= 0; s--, c--) {
-        // Next we find the first one that isn't the same which should be the
-        // frame that called our sample function and the control.
-        if (sampleLines[s] !== controlLines[c]) {
-          // In V8, the first line is describing the message but other VMs don't.
-          // If we're about to return the first line, and the control is also on the same
-          // line, that's a pretty good indicator that our sample threw at same line as
-          // the control. I.e. before we entered the sample frame. So we ignore this result.
-          // This can happen if you passed a class to function component, or non-function.
-          if (s !== 1 || c !== 1) {
-            do {
-              s--;
-              c--; // We may still have similar intermediate frames from the construct call.
-              // The next one that isn't the same should be our match though.
-
-              if (c < 0 || sampleLines[s] !== controlLines[c]) {
-                // V8 adds a "new" prefix for native classes. Let's remove it to make it prettier.
-                var _frame = '\n' + sampleLines[s].replace(' at new ', ' at '); // If our component frame is labeled "<anonymous>"
-                // but we have a user-provided "displayName"
-                // splice it in to make the stack more readable.
-
-
-                if (fn.displayName && _frame.includes('<anonymous>')) {
-                  _frame = _frame.replace('<anonymous>', fn.displayName);
-                }
-
-                if (true) {
-                  if (typeof fn === 'function') {
-                    componentFrameCache.set(fn, _frame);
-                  }
-                } // Return the line we found.
-
-
-                return _frame;
-              }
-            } while (s >= 1 && c >= 0);
-          }
-
-          break;
-        }
-      }
-    }
-  } finally {
-    reentry = false;
-
-    {
-      ReactSharedInternals.H = previousDispatcher;
-      reenableLogs();
-    }
-
-    Error.prepareStackTrace = previousPrepareStackTrace;
-  } // Fallback to just using the name if we couldn't make it throw.
-
-
-  var name = fn ? fn.displayName || fn.name : '';
-  var syntheticFrame = name ? describeBuiltInComponentFrame(name) : '';
-
-  {
-    if (typeof fn === 'function') {
-      componentFrameCache.set(fn, syntheticFrame);
-    }
-  }
-
-  return syntheticFrame;
-}
-function describeFunctionComponentFrame(fn) {
-  {
-    return describeNativeComponentFrame(fn, false);
+    var name = getComponentNameFromType(type);
+    return name ? '<' + name + '>' : '<...>';
+  } catch (x) {
+    return '<...>';
   }
 }
-
-function shouldConstruct(Component) {
-  var prototype = Component.prototype;
-  return !!(prototype && prototype.isReactComponent);
-} // TODO: Delete this once the key warning no longer uses it. I.e. when enableOwnerStacks ship.
-
-
-function describeUnknownElementTypeFrameInDEV(type) {
-
-  if (type == null) {
-    return '';
-  }
-
-  if (typeof type === 'function') {
-    {
-      return describeNativeComponentFrame(type, shouldConstruct(type));
-    }
-  }
-
-  if (typeof type === 'string') {
-    return describeBuiltInComponentFrame(type);
-  }
-
-  switch (type) {
-    case REACT_SUSPENSE_TYPE:
-      return describeBuiltInComponentFrame('Suspense');
-
-    case REACT_SUSPENSE_LIST_TYPE:
-      return describeBuiltInComponentFrame('SuspenseList');
-  }
-
-  if (typeof type === 'object') {
-    switch (type.$$typeof) {
-      case REACT_FORWARD_REF_TYPE:
-        return describeFunctionComponentFrame(type.render);
-
-      case REACT_MEMO_TYPE:
-        // Memo may contain any component type so we recursively resolve it.
-        return describeUnknownElementTypeFrameInDEV(type.type);
-
-      case REACT_LAZY_TYPE:
-        {
-          var lazyComponent = type;
-          var payload = lazyComponent._payload;
-          var init = lazyComponent._init;
-
-          try {
-            // Lazy may contain any component type so we recursively resolve it.
-            return describeUnknownElementTypeFrameInDEV(init(payload));
-          } catch (x) {}
-        }
-    }
-  }
-
-  return '';
-}
-
-var REACT_CLIENT_REFERENCE = Symbol.for('react.client.reference');
 
 function getOwner() {
   {
@@ -950,13 +515,32 @@ function getOwner() {
     return dispatcher.getOwner();
   }
 }
+/** @noinline */
 
+
+function UnknownOwner() {
+  /** @noinline */
+  return function () {
+    return Error('react-stack-top-frame');
+  }();
+}
+
+var createFakeCallStack = {
+  react_stack_bottom_frame: function (callStackForError) {
+    return callStackForError();
+  }
+};
 var specialPropKeyWarningShown;
 var didWarnAboutElementRef;
 var didWarnAboutOldJSXRuntime;
+var unknownOwnerDebugStack;
+var unknownOwnerDebugTask;
 
 {
-  didWarnAboutElementRef = {};
+  didWarnAboutElementRef = {}; // We use this technique to trick minifiers to preserve the function name.
+
+  unknownOwnerDebugStack = createFakeCallStack.react_stack_bottom_frame.bind(createFakeCallStack, UnknownOwner)();
+  unknownOwnerDebugTask = createTask(getTaskName(UnknownOwner));
 }
 
 function hasValidRef(config) {
@@ -1025,23 +609,11 @@ function elementRefGetterWithDeprecationWarning() {
  * will not work. Instead test $$typeof field against Symbol.for('react.transitional.element') to check
  * if something is a React Element.
  *
- * @param {*} type
- * @param {*} props
- * @param {*} key
- * @param {string|object} ref
- * @param {*} owner
- * @param {*} self A *temporary* helper to detect places where `this` is
- * different from the `owner` when React.createElement is called, so that we
- * can warn. We want to get rid of owner and replace string `ref`s with arrow
- * functions, and as long as `this` and owner are the same, there will be no
- * change in behavior.
- * @param {*} source An annotation object (added by a transpiler or otherwise)
- * indicating filename, line number, and/or other information.
  * @internal
  */
 
 
-function ReactElement(type, key, self, source, owner, props, debugStack, debugTask) {
+function ReactElement(type, key, props, owner, debugStack, debugTask) {
   // Ignore whatever was passed as the ref argument and treat `props.ref` as
   // the source of truth. The only thing we use this for is `element.ref`,
   // which will log a deprecation warning on access. In the next release, we
@@ -1118,6 +690,18 @@ function ReactElement(type, key, self, source, owner, props, debugStack, debugTa
       writable: true,
       value: null
     });
+    Object.defineProperty(element, '_debugStack', {
+      configurable: false,
+      enumerable: false,
+      writable: true,
+      value: debugStack
+    });
+    Object.defineProperty(element, '_debugTask', {
+      configurable: false,
+      enumerable: false,
+      writable: true,
+      value: debugTask
+    });
 
     if (Object.freeze) {
       Object.freeze(element.props);
@@ -1135,46 +719,16 @@ function ReactElement(type, key, self, source, owner, props, debugStack, debugTa
 
 function createElement(type, config, children) {
   {
-    if (!isValidElementType(type)) {
-      // This is just an optimistic check that provides a better stack trace before
-      // owner stacks. It's really up to the renderer if it's a valid element type.
-      // When owner stacks are enabled, we instead warn in the renderer and it'll
-      // have the stack trace of the JSX element anyway.
-      //
-      // This is an invalid element type.
-      //
-      // We warn in this case but don't throw. We expect the element creation to
-      // succeed and there will likely be errors in render.
-      var info = '';
-
-      if (type === undefined || typeof type === 'object' && type !== null && Object.keys(type).length === 0) {
-        info += ' You likely forgot to export your component from the file ' + "it's defined in, or you might have mixed up default and named imports.";
-      }
-
-      var typeString;
-
-      if (type === null) {
-        typeString = 'null';
-      } else if (isArray(type)) {
-        typeString = 'array';
-      } else if (type !== undefined && type.$$typeof === REACT_ELEMENT_TYPE) {
-        typeString = "<" + (getComponentNameFromType(type.type) || 'Unknown') + " />";
-        info = ' Did you accidentally export a JSX literal instead of a component?';
-      } else {
-        typeString = typeof type;
-      }
-
-      console.error('React.createElement: type is invalid -- expected a string (for ' + 'built-in components) or a class/function (for composite ' + 'components) but got: %s.%s', typeString, info);
-    } else {
-      // This is a valid element type.
-      // Skip key warning if the type isn't valid since our key validation logic
-      // doesn't expect a non-string/function type and can throw confusing
-      // errors. We don't want exception behavior to differ between dev and
-      // prod. (Rendering will throw with a helpful message and as soon as the
-      // type is fixed, the key warnings will appear.)
-      for (var i = 2; i < arguments.length; i++) {
-        validateChildKeys(arguments[i], type);
-      }
+    // We don't warn for invalid element type here because with owner stacks,
+    // we error in the renderer. The renderer is the only one that knows what
+    // types are valid for this particular renderer so we let it error there.
+    // Skip key warning if the type isn't valid since our key validation logic
+    // doesn't expect a non-string/function type and can throw confusing
+    // errors. We don't want exception behavior to differ between dev and
+    // prod. (Rendering will throw with a helpful message and as soon as the
+    // type is fixed, the key warnings will appear.)
+    for (var i = 2; i < arguments.length; i++) {
+      validateChildKeys(arguments[i]);
     } // Unlike the jsx() runtime, createElement() doesn't warn about key spread.
 
   }
@@ -1258,14 +812,17 @@ function createElement(type, config, children) {
     }
   }
 
-  return ReactElement(type, key, undefined, undefined, getOwner(), props);
+  var trackActualOwner = ReactSharedInternals.recentlyCreatedOwnerStacks++ < ownerStackLimit;
+  return ReactElement(type, key, props, getOwner(), (trackActualOwner ? Error('react-stack-top-frame') : unknownOwnerDebugStack), (trackActualOwner ? createTask(getTaskName(type)) : unknownOwnerDebugTask));
 }
 function cloneAndReplaceKey(oldElement, newKey) {
-  var clonedElement = ReactElement(oldElement.type, newKey, undefined, undefined, oldElement._owner, oldElement.props);
+  var clonedElement = ReactElement(oldElement.type, newKey, oldElement.props, oldElement._owner, oldElement._debugStack, oldElement._debugTask);
 
   {
     // The cloned element should inherit the original element's key validation.
-    clonedElement._store.validated = oldElement._store.validated;
+    if (oldElement._store) {
+      clonedElement._store.validated = oldElement._store.validated;
+    }
   }
 
   return clonedElement;
@@ -1301,6 +858,7 @@ function cloneElement(element, config, children) {
       key = '' + config.key;
     } // Remaining properties override existing props
 
+
     for (propName in config) {
       if (hasOwnProperty.call(config, propName) && // Skip over reserved prop names
       propName !== 'key' && // ...and maybe these, too, though we currently rely on them for
@@ -1313,9 +871,7 @@ function cloneElement(element, config, children) {
       // if the property were missing. This is mostly for
       // backwards compatibility.
       !(propName === 'ref' && config.ref === undefined)) {
-        {
-          props[propName] = config[propName];
-        }
+        props[propName] = config[propName];
       }
     }
   } // Children can be more than one argument, and those are transferred onto
@@ -1336,10 +892,10 @@ function cloneElement(element, config, children) {
     props.children = childArray;
   }
 
-  var clonedElement = ReactElement(element.type, key, undefined, undefined, owner, props);
+  var clonedElement = ReactElement(element.type, key, props, owner, element._debugStack, element._debugTask);
 
   for (var _i2 = 2; _i2 < arguments.length; _i2++) {
-    validateChildKeys(arguments[_i2], clonedElement.type);
+    validateChildKeys(arguments[_i2]);
   }
 
   return clonedElement;
@@ -1354,45 +910,21 @@ function cloneElement(element, config, children) {
  * @param {*} parentType node's parent's type.
  */
 
-function validateChildKeys(node, parentType) {
+function validateChildKeys(node) {
   {
-
-    if (typeof node !== 'object' || !node) {
-      return;
-    }
-
-    if (node.$$typeof === REACT_CLIENT_REFERENCE) ; else if (isArray(node)) {
-      for (var i = 0; i < node.length; i++) {
-        var child = node[i];
-
-        if (isValidElement(child)) {
-          validateExplicitKey(child, parentType);
-        }
-      }
-    } else if (isValidElement(node)) {
-      // This element was passed in a valid location.
+    // Mark elements as being in a valid static child position so they
+    // don't need keys.
+    if (isValidElement(node)) {
       if (node._store) {
         node._store.validated = 1;
       }
-    } else {
-      var iteratorFn = getIteratorFn(node);
-
-      if (typeof iteratorFn === 'function') {
-        // Entry iterators used to provide implicit keys,
-        // but now we print a separate warning for them later.
-        if (iteratorFn !== node.entries) {
-          var iterator = iteratorFn.call(node);
-
-          if (iterator !== node) {
-            var step;
-
-            while (!(step = iterator.next()).done) {
-              if (isValidElement(step.value)) {
-                validateExplicitKey(step.value, parentType);
-              }
-            }
-          }
+    } else if (isLazyType(node)) {
+      if (node._payload.status === 'fulfilled') {
+        if (isValidElement(node._payload.value) && node._payload.value._store) {
+          node._payload.value._store.validated = 1;
         }
+      } else if (node._store) {
+        node._store.validated = 1;
       }
     }
   }
@@ -1409,93 +941,8 @@ function validateChildKeys(node, parentType) {
 function isValidElement(object) {
   return typeof object === 'object' && object !== null && object.$$typeof === REACT_ELEMENT_TYPE;
 }
-var ownerHasKeyUseWarning = {};
-/**
- * Warn if the element doesn't have an explicit key assigned to it.
- * This element is in an array. The array could grow and shrink or be
- * reordered. All children that haven't already been validated are required to
- * have a "key" property assigned to it. Error statuses are cached so a warning
- * will only be shown once.
- *
- * @internal
- * @param {ReactElement} element Element that requires a key.
- * @param {*} parentType element's parent's type.
- */
-
-function validateExplicitKey(element, parentType) {
-
-  {
-    if (!element._store || element._store.validated || element.key != null) {
-      return;
-    }
-
-    element._store.validated = 1;
-    var currentComponentErrorInfo = getCurrentComponentErrorInfo(parentType);
-
-    if (ownerHasKeyUseWarning[currentComponentErrorInfo]) {
-      return;
-    }
-
-    ownerHasKeyUseWarning[currentComponentErrorInfo] = true; // Usually the current owner is the offender, but if it accepts children as a
-    // property, it may be the creator of the child that's responsible for
-    // assigning it a key.
-
-    var childOwner = '';
-
-    if (element && element._owner != null && element._owner !== getOwner()) {
-      var ownerName = null;
-
-      if (typeof element._owner.tag === 'number') {
-        ownerName = getComponentNameFromType(element._owner.type);
-      } else if (typeof element._owner.name === 'string') {
-        ownerName = element._owner.name;
-      } // Give the component that originally created this child.
-
-
-      childOwner = " It was passed a child from " + ownerName + ".";
-    }
-
-    var prevGetCurrentStack = ReactSharedInternals.getCurrentStack;
-
-    ReactSharedInternals.getCurrentStack = function () {
-
-      var stack = describeUnknownElementTypeFrameInDEV(element.type); // Delegate to the injected renderer-specific implementation
-
-      if (prevGetCurrentStack) {
-        stack += prevGetCurrentStack() || '';
-      }
-
-      return stack;
-    };
-
-    console.error('Each child in a list should have a unique "key" prop.' + '%s%s See https://react.dev/link/warning-keys for more information.', currentComponentErrorInfo, childOwner);
-    ReactSharedInternals.getCurrentStack = prevGetCurrentStack;
-  }
-}
-
-function getCurrentComponentErrorInfo(parentType) {
-  {
-    var info = '';
-    var owner = getOwner();
-
-    if (owner) {
-      var name = getComponentNameFromType(owner.type);
-
-      if (name) {
-        info = '\n\nCheck the render method of `' + name + '`.';
-      }
-    }
-
-    if (!info) {
-      var parentName = getComponentNameFromType(parentType);
-
-      if (parentName) {
-        info = "\n\nCheck the top-level render call using <" + parentName + ">.";
-      }
-    }
-
-    return info;
-  }
+function isLazyType(object) {
+  return typeof object === 'object' && object !== null && object.$$typeof === REACT_LAZY_TYPE;
 }
 
 var SEPARATOR = '.';
@@ -1556,8 +1003,6 @@ function getElementKey(element, index) {
   return index.toString(36);
 }
 
-function noop$1() {}
-
 function resolveThenable(thenable) {
   switch (thenable.status) {
     case 'fulfilled':
@@ -1580,7 +1025,7 @@ function resolveThenable(thenable) {
           // some custom userspace implementation. We treat it as "pending".
           // Attach a dummy listener, to ensure that any lazy initialization can
           // happen. Flight lazily parses JSON when the value is actually awaited.
-          thenable.then(noop$1, noop$1);
+          thenable.then(noop, noop);
         } else {
           // This is an uncached thenable that we haven't seen before.
           // TODO: Detect infinite ping loops caused by uncached promises.
@@ -1893,14 +1338,11 @@ function createContext(defaultValue) {
     Provider: null,
     Consumer: null
   };
-
-  {
-    context.Provider = context;
-    context.Consumer = {
-      $$typeof: REACT_CONSUMER_TYPE,
-      _context: context
-    };
-  }
+  context.Provider = context;
+  context.Consumer = {
+    $$typeof: REACT_CONSUMER_TYPE,
+    _context: context
+  };
 
   {
     context._currentRenderer = null;
@@ -1917,6 +1359,16 @@ var Rejected = 2;
 
 function lazyInitializer(payload) {
   if (payload._status === Uninitialized) {
+    {
+      var ioInfo = payload._ioInfo;
+
+      if (ioInfo != null) {
+        // Mark when we first kicked off the lazy request.
+        // $FlowFixMe[cannot-write]
+        ioInfo.start = ioInfo.end = performance.now();
+      }
+    }
+
     var ctor = payload._result;
     var thenable = ctor(); // Transition to the next state.
     // This might throw either because it's missing or throws. If so, we treat it
@@ -1930,6 +1382,23 @@ function lazyInitializer(payload) {
         var resolved = payload;
         resolved._status = Resolved;
         resolved._result = moduleObject;
+
+        {
+          var _ioInfo = payload._ioInfo;
+
+          if (_ioInfo != null) {
+            // Mark the end time of when we resolved.
+            // $FlowFixMe[cannot-write]
+            _ioInfo.end = performance.now();
+          } // Make the thenable introspectable
+
+
+          if (thenable.status === undefined) {
+            var fulfilledThenable = thenable;
+            fulfilledThenable.status = 'fulfilled';
+            fulfilledThenable.value = moduleObject;
+          }
+        }
       }
     }, function (error) {
       if (payload._status === Pending || payload._status === Uninitialized) {
@@ -1937,8 +1406,41 @@ function lazyInitializer(payload) {
         var rejected = payload;
         rejected._status = Rejected;
         rejected._result = error;
+
+        {
+          var _ioInfo2 = payload._ioInfo;
+
+          if (_ioInfo2 != null) {
+            // Mark the end time of when we rejected.
+            // $FlowFixMe[cannot-write]
+            _ioInfo2.end = performance.now();
+          } // Make the thenable introspectable
+
+
+          if (thenable.status === undefined) {
+            var rejectedThenable = thenable;
+            rejectedThenable.status = 'rejected';
+            rejectedThenable.reason = error;
+          }
+        }
       }
     });
+
+    {
+      var _ioInfo3 = payload._ioInfo;
+
+      if (_ioInfo3 != null) {
+        // Stash the thenable for introspection of the value later.
+        // $FlowFixMe[cannot-write]
+        _ioInfo3.value = thenable;
+        var displayName = thenable.displayName;
+
+        if (typeof displayName === 'string') {
+          // $FlowFixMe[cannot-write]
+          _ioInfo3.name = displayName;
+        }
+      }
+    }
 
     if (payload._status === Uninitialized) {
       // In case, we're still uninitialized, then we're waiting for the thenable
@@ -1983,6 +1485,29 @@ function lazy(ctor) {
     _payload: payload,
     _init: lazyInitializer
   };
+
+  {
+    // TODO: We should really track the owner here but currently ReactIOInfo
+    // can only contain ReactComponentInfo and not a Fiber. It's unusual to
+    // create a lazy inside an owner though since they should be in module scope.
+    var owner = null;
+    var ioInfo = {
+      name: 'lazy',
+      start: -1,
+      end: -1,
+      value: null,
+      owner: owner,
+      debugStack: new Error('react-stack-top-frame'),
+      // eslint-disable-next-line react-internal/no-production-logging
+      debugTask: console.createTask ? console.createTask('lazy()') : null
+    };
+    payload._ioInfo = ioInfo; // Add debug info to the lazy, but this doesn't have an await stack yet.
+    // That will be inferred by later usage.
+
+    lazyType._debugInfo = [{
+      awaited: ioInfo
+    }];
+  }
 
   return lazyType;
 }
@@ -2043,7 +1568,7 @@ function forwardRef(render) {
 
 function memo(type, compare) {
   {
-    if (!isValidElementType(type)) {
+    if (type == null) {
       console.error('memo: The first argument must be a component. Instead ' + 'received: %s', type === null ? 'null' : typeof type);
     }
   }
@@ -2102,7 +1627,14 @@ function noopCache(fn) {
     return fn.apply(null, arguments);
   };
 }
+
 var cache = noopCache ;
+
+function noopCacheSignal() {
+  return null;
+}
+
+var cacheSignal = noopCacheSignal ;
 
 function resolveDispatcher() {
   var dispatcher = ReactSharedInternals.H;
@@ -2142,14 +1674,32 @@ function useRef(initialValue) {
   return dispatcher.useRef(initialValue);
 }
 function useEffect(create, deps) {
+  {
+    if (create == null) {
+      console.warn('React Hook useEffect requires an effect callback. Did you forget to pass a callback to the hook?');
+    }
+  }
+
   var dispatcher = resolveDispatcher();
   return dispatcher.useEffect(create, deps);
 }
 function useInsertionEffect(create, deps) {
+  {
+    if (create == null) {
+      console.warn('React Hook useInsertionEffect requires an effect callback. Did you forget to pass a callback to the hook?');
+    }
+  }
+
   var dispatcher = resolveDispatcher();
   return dispatcher.useInsertionEffect(create, deps);
 }
 function useLayoutEffect(create, deps) {
+  {
+    if (create == null) {
+      console.warn('React Hook useLayoutEffect requires an effect callback. Did you forget to pass a callback to the hook?');
+    }
+  }
+
   var dispatcher = resolveDispatcher();
   return dispatcher.useLayoutEffect(create, deps);
 }
@@ -2201,17 +1751,18 @@ function useMemoCache(size) {
 
   return dispatcher.useMemoCache(size);
 }
-function useOptimistic(passthrough, reducer) {
+function useEffectEvent(callback) {
   var dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
 
+  return dispatcher.useEffectEvent(callback);
+}
+function useOptimistic(passthrough, reducer) {
+  var dispatcher = resolveDispatcher();
   return dispatcher.useOptimistic(passthrough, reducer);
 }
 function useActionState(action, initialState, permalink) {
-  {
-    var dispatcher = resolveDispatcher(); // $FlowFixMe[not-a-function] This is unstable, thus optional
-
-    return dispatcher.useActionState(action, initialState, permalink);
-  }
+  var dispatcher = resolveDispatcher();
+  return dispatcher.useActionState(action, initialState, permalink);
 }
 
 var reportGlobalError = typeof reportError === 'function' ? // In modern browsers, reportError will dispatch an error event,
@@ -2243,33 +1794,58 @@ reportError : function (error) {
   console['error'](error);
 };
 
+function releaseAsyncTransition() {
+  {
+    ReactSharedInternals.asyncTransitions--;
+  }
+}
+
 function startTransition(scope, options) {
   var prevTransition = ReactSharedInternals.T;
   var currentTransition = {};
-  ReactSharedInternals.T = currentTransition;
 
   {
     currentTransition._updatedFibers = new Set();
   }
 
-  {
-    try {
-      var returnValue = scope();
-      var onStartTransitionFinish = ReactSharedInternals.S;
+  ReactSharedInternals.T = currentTransition;
 
-      if (onStartTransitionFinish !== null) {
-        onStartTransitionFinish(currentTransition, returnValue);
-      }
+  try {
+    var returnValue = scope();
+    var onStartTransitionFinish = ReactSharedInternals.S;
 
-      if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
-        returnValue.then(noop, reportGlobalError);
-      }
-    } catch (error) {
-      reportGlobalError(error);
-    } finally {
-      warnAboutTransitionSubscriptions(prevTransition, currentTransition);
-      ReactSharedInternals.T = prevTransition;
+    if (onStartTransitionFinish !== null) {
+      onStartTransitionFinish(currentTransition, returnValue);
     }
+
+    if (typeof returnValue === 'object' && returnValue !== null && typeof returnValue.then === 'function') {
+      if (true) {
+        // Keep track of the number of async transitions still running so we can warn.
+        ReactSharedInternals.asyncTransitions++;
+        returnValue.then(releaseAsyncTransition, releaseAsyncTransition);
+      }
+
+      returnValue.then(noop, reportGlobalError);
+    }
+  } catch (error) {
+    reportGlobalError(error);
+  } finally {
+    warnAboutTransitionSubscriptions(prevTransition, currentTransition);
+
+    if (prevTransition !== null && currentTransition.types !== null) {
+      // If we created a new types set in the inner transition, we transfer it to the parent
+      // since they should share the same set. They're conceptually entangled.
+      {
+        if (prevTransition.types !== null && prevTransition.types !== currentTransition.types) {
+          // Just assert that assumption holds that we're not overriding anything.
+          console.error('We expected inner Transitions to have transferred the outer types set and ' + 'that you cannot add to the outer Transition while inside the inner.' + 'This is a bug in React.');
+        }
+      }
+
+      prevTransition.types = currentTransition.types;
+    }
+
+    ReactSharedInternals.T = prevTransition;
   }
 }
 
@@ -2286,8 +1862,6 @@ function warnAboutTransitionSubscriptions(prevTransition, currentTransition) {
     }
   }
 }
-
-function noop() {}
 
 var didWarnAboutMessageChannel = false;
 var enqueueTaskImpl = null;
@@ -2643,9 +2217,23 @@ var queueSeveralMicrotasks = typeof queueMicrotask === 'function' ? function (ca
   });
 } : enqueueTask;
 
-var ReactCompilerRuntime = {
+function captureOwnerStack() {
+  {
+    var getCurrentStack = ReactSharedInternals.getCurrentStack;
+
+    if (getCurrentStack === null) {
+      return null;
+    } // The current stack will be the owner stack which it is always here.
+
+
+    return getCurrentStack();
+  }
+}
+
+var ReactCompilerRuntime = /*#__PURE__*/Object.freeze({
+  __proto__: null,
   c: useMemoCache
-};
+});
 
 var Children = {
   map: mapChildren,
@@ -2655,6 +2243,7 @@ var Children = {
   only: onlyChild
 };
 
+exports.Activity = REACT_ACTIVITY_TYPE;
 exports.Children = Children;
 exports.Component = Component;
 exports.Fragment = REACT_FRAGMENT_TYPE;
@@ -2666,6 +2255,8 @@ exports.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = ReactS
 exports.__COMPILER_RUNTIME = ReactCompilerRuntime;
 exports.act = act;
 exports.cache = cache;
+exports.cacheSignal = cacheSignal;
+exports.captureOwnerStack = captureOwnerStack;
 exports.cloneElement = cloneElement;
 exports.createContext = createContext;
 exports.createElement = createElement;
@@ -2683,6 +2274,7 @@ exports.useContext = useContext;
 exports.useDebugValue = useDebugValue;
 exports.useDeferredValue = useDeferredValue;
 exports.useEffect = useEffect;
+exports.useEffectEvent = useEffectEvent;
 exports.useId = useId;
 exports.useImperativeHandle = useImperativeHandle;
 exports.useInsertionEffect = useInsertionEffect;
